@@ -225,6 +225,13 @@ function findPresenceForPlayer(targetName, targetRole) {
 	return null;
 }
 
+function getPresenceByRole(targetRole) {
+	cleanupPresence();
+	return [...serverPresence.values()].filter((presence) => {
+		return targetRole === "any" || presence.role === targetRole;
+	});
+}
+
 function authRoblox(req, res, next) {
 	if (req.header("x-bridge-secret") !== process.env.BRIDGE_SHARED_SECRET) {
 		res.status(401).json({ error: "unauthorized" });
@@ -462,6 +469,32 @@ const commands = [
 					{ name: "Training", value: "training" }
 				)
 		),
+	new SlashCommandBuilder()
+		.setName("bridgeservers")
+		.setDescription("List live Roblox servers connected to the bridge")
+		.addStringOption((option) =>
+			option
+				.setName("server")
+				.setDescription("Which game server group to inspect")
+				.addChoices(
+					{ name: "Any", value: "any" },
+					{ name: "Main", value: "main" },
+					{ name: "Training", value: "training" }
+				)
+		),
+	new SlashCommandBuilder()
+		.setName("bridgeplayers")
+		.setDescription("List players the bridge currently sees online")
+		.addStringOption((option) =>
+			option
+				.setName("server")
+				.setDescription("Which game server group to inspect")
+				.addChoices(
+					{ name: "Any", value: "any" },
+					{ name: "Main", value: "main" },
+					{ name: "Training", value: "training" }
+				)
+		),
 ];
 
 const client = new Client({
@@ -619,6 +652,44 @@ client.on("interactionCreate", async (interaction) => {
 	if (interaction.commandName === "shutdownserver") {
 		const reason = interaction.options.getString("reason", false);
 		await queueJobAndRespond(interaction, "shutdownserver", { reason }, targetRole, requestedBy);
+		return;
+	}
+
+	if (interaction.commandName === "bridgeservers") {
+		const presences = getPresenceByRole(targetRole);
+		if (presences.length === 0) {
+			await interaction.reply(`No live bridge servers found for \`${targetRole}\`.`);
+			return;
+		}
+
+		const lines = presences.slice(0, 15).map((presence, index) => {
+			return `${index + 1}. \`${presence.role}\` job \`${presence.jobId}\` players: ${(presence.players || []).length}`;
+		});
+		await interaction.reply(lines.join("\n"));
+		return;
+	}
+
+	if (interaction.commandName === "bridgeplayers") {
+		const presences = getPresenceByRole(targetRole);
+		if (presences.length === 0) {
+			await interaction.reply(`No live bridge servers found for \`${targetRole}\`.`);
+			return;
+		}
+
+		const players = [];
+		for (const presence of presences) {
+			for (const player of presence.players || []) {
+				players.push(`\`${player.name}\` (${player.displayName}) - ${presence.role} - \`${presence.jobId}\``);
+			}
+		}
+
+		if (players.length === 0) {
+			await interaction.reply(`No players are currently visible to the bridge in \`${targetRole}\`.`);
+			return;
+		}
+
+		await interaction.reply(players.slice(0, 40).join("\n"));
+		return;
 	}
 });
 

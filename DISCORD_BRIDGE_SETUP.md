@@ -87,6 +87,8 @@ Also make sure `HttpService` is enabled in Roblox Game Settings.
 - `/returntomap username:<roblox username> server:<any|main|training>`
 - `/duel challenger_username:<roblox username> opponent_username:<roblox username or dummy> server:<any|main|training>`
 - `/shutdownserver reason:<optional> server:<any|main|training>`
+- `/bridgeservers server:<any|main|training>`
+- `/bridgeplayers server:<any|main|training>`
 
 ### Command results
 
