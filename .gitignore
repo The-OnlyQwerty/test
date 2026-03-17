@@ -1,0 +1,6 @@
+backend/.env
+backend/node_modules/
+.vs/
+*.wsuo
+*.suo
+*.sqlite
