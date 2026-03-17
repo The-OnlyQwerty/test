@@ -76,6 +76,13 @@ Also make sure `HttpService` is enabled in Roblox Game Settings.
 - `/duel challenger_username:<roblox username> opponent_username:<roblox username or dummy> server:<any|main|training>`
 - `/shutdownserver reason:<optional> server:<any|main|training>`
 
+### Command results
+
+- Discord commands now wait briefly for Roblox to execute the job
+- if the game finishes the job within about 20 seconds, Discord will show `completed` or `failed`
+- if the server claims the job but takes too long, Discord will report that it timed out while waiting
+- if the server never claims the job, Discord will report that it is still pending
+
 ## Important limitations
 
 - all player-targeted commands require the relevant players to be online in the targeted server

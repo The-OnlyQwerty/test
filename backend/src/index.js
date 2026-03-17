@@ -26,6 +26,8 @@ app.use(express.json());
 let nextJobId = 1;
 const jobs = [];
 const serverPresence = new Map();
+const JOB_RESULT_TIMEOUT_MS = 20000;
+const JOB_RESULT_POLL_MS = 500;
 const allowedRoleIds = new Set(
 	(process.env.DISCORD_ALLOWED_ROLE_IDS || "")
 		.split(",")
@@ -67,6 +69,42 @@ function createJob(type, payload, targetRole, requestedBy) {
 		result: null,
 	};
 	jobs.push(job);
+	return job;
+}
+
+function formatJobResult(job) {
+	const scope = job.targetServerJobId ? `server \`${job.targetServerJobId}\`` : `scope \`${job.targetRole}\``;
+	if (job.status === "completed") {
+		return `Job \`${job.id}\` completed on ${scope}: ${job.result || "ok"}.`;
+	}
+	if (job.status === "failed") {
+		return `Job \`${job.id}\` failed on ${scope}: ${job.result || "unknown error"}.`;
+	}
+	if (job.status === "claimed") {
+		return `Job \`${job.id}\` was claimed by Roblox but did not finish within ${Math.floor(JOB_RESULT_TIMEOUT_MS / 1000)}s.`;
+	}
+	return `Job \`${job.id}\` is still pending after ${Math.floor(JOB_RESULT_TIMEOUT_MS / 1000)}s.`;
+}
+
+async function waitForJobResult(job, timeoutMs = JOB_RESULT_TIMEOUT_MS) {
+	const startedAt = Date.now();
+	while (Date.now() - startedAt < timeoutMs) {
+		if (job.status === "completed" || job.status === "failed") {
+			return job;
+		}
+		await new Promise((resolve) => setTimeout(resolve, JOB_RESULT_POLL_MS));
+	}
+	return job;
+}
+
+async function queueJobAndRespond(interaction, type, payload, targetRole, requestedBy, responseTextBuilder) {
+	await interaction.deferReply();
+	const job = createJob(type, payload, targetRole, requestedBy);
+	if (typeof responseTextBuilder === "function") {
+		responseTextBuilder(job);
+	}
+	await waitForJobResult(job);
+	await interaction.editReply(formatJobResult(job));
 	return job;
 }
 
@@ -387,8 +425,7 @@ client.on("interactionCreate", async (interaction) => {
 
 	if (interaction.commandName === "announce") {
 		const message = interaction.options.getString("message", true);
-		const job = createJob("announce", { message }, targetRole, requestedBy);
-		await interaction.reply(`Queued announcement job \`${job.id}\` for \`${targetRole}\`.`);
+		await queueJobAndRespond(interaction, "announce", { message }, targetRole, requestedBy);
 		return;
 	}
 
@@ -402,7 +439,9 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("setkills", { targetUsername, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.reply(`Queued setkills job \`${job.id}\` for Roblox user \`${targetUsername}\`.`);
+		await interaction.deferReply();
+		await waitForJobResult(job);
+		await interaction.editReply(formatJobResult(job));
 		return;
 	}
 
@@ -417,7 +456,9 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("buff", { targetUsername, stat, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.reply(`Queued buff job \`${job.id}\` for Roblox user \`${targetUsername}\`.`);
+		await interaction.deferReply();
+		await waitForJobResult(job);
+		await interaction.editReply(formatJobResult(job));
 		return;
 	}
 
@@ -431,7 +472,9 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("heal", { targetUsername, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.reply(`Queued heal job \`${job.id}\` for Roblox user \`${targetUsername}\`.`);
+		await interaction.deferReply();
+		await waitForJobResult(job);
+		await interaction.editReply(formatJobResult(job));
 		return;
 	}
 
@@ -445,7 +488,9 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("kick", { targetUsername, reason }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.reply(`Queued kick job \`${job.id}\` for Roblox user \`${targetUsername}\`.`);
+		await interaction.deferReply();
+		await waitForJobResult(job);
+		await interaction.editReply(formatJobResult(job));
 		return;
 	}
 
@@ -458,7 +503,9 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("return_to_main", { targetUsername }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.reply(`Queued return-to-map job \`${job.id}\` for Roblox user \`${targetUsername}\`.`);
+		await interaction.deferReply();
+		await waitForJobResult(job);
+		await interaction.editReply(formatJobResult(job));
 		return;
 	}
 
@@ -492,14 +539,15 @@ client.on("interactionCreate", async (interaction) => {
 
 		const job = createJob("duel", payload, targetRole, requestedBy);
 		job.targetServerJobId = targetServerJobId;
-		await interaction.reply(`Queued duel job \`${job.id}\` for challenger \`${challengerUsername}\`.`);
+		await interaction.deferReply();
+		await waitForJobResult(job);
+		await interaction.editReply(formatJobResult(job));
 		return;
 	}
 
 	if (interaction.commandName === "shutdownserver") {
 		const reason = interaction.options.getString("reason", false);
-		const job = createJob("shutdownserver", { reason }, targetRole, requestedBy);
-		await interaction.reply(`Queued shutdown job \`${job.id}\` for \`${targetRole}\`.`);
+		await queueJobAndRespond(interaction, "shutdownserver", { reason }, targetRole, requestedBy);
 	}
 });
 
