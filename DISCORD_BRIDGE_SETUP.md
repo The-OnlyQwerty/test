@@ -24,6 +24,7 @@ Supported job types:
    - `DISCORD_CLIENT_ID`
    - `DISCORD_GUILD_ID` (recommended during testing)
    - `DISCORD_ALLOWED_ROLE_IDS`
+   - `DISCORD_AUDIT_CHANNEL_ID` (optional)
    - `BRIDGE_SHARED_SECRET`
    - `PORT`
 
@@ -53,6 +54,17 @@ To get a role ID:
 1. Enable Discord Developer Mode
 2. Right-click the role in Server Settings
 3. Copy the role ID
+
+### Audit log channel
+
+Set `DISCORD_AUDIT_CHANNEL_ID` in `.env` to a Discord text channel ID if you want all JD bridge command usage logged.
+
+The audit log includes:
+
+- who ran the command
+- the job id and payload
+- which server it targeted
+- whether Roblox completed, failed, or timed out
 
 ## Roblox setup
 

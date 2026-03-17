@@ -28,6 +28,7 @@ const jobs = [];
 const serverPresence = new Map();
 const JOB_RESULT_TIMEOUT_MS = 20000;
 const JOB_RESULT_POLL_MS = 500;
+const auditChannelId = String(process.env.DISCORD_AUDIT_CHANNEL_ID || "").trim();
 const allowedRoleIds = new Set(
 	(process.env.DISCORD_ALLOWED_ROLE_IDS || "")
 		.split(",")
@@ -86,6 +87,40 @@ function formatJobResult(job) {
 	return `Job \`${job.id}\` is still pending after ${Math.floor(JOB_RESULT_TIMEOUT_MS / 1000)}s.`;
 }
 
+function summarizePayload(payload) {
+	if (!payload || typeof payload !== "object") {
+		return "none";
+	}
+
+	const parts = [];
+	for (const [key, value] of Object.entries(payload)) {
+		if (value === undefined || value === null || value === "") {
+			continue;
+		}
+		parts.push(`${key}=${String(value)}`);
+	}
+
+	return parts.length > 0 ? parts.join(", ") : "none";
+}
+
+async function sendAuditLog(lines) {
+	if (!auditChannelId || !client.isReady()) {
+		return;
+	}
+
+	try {
+		const channel = await client.channels.fetch(auditChannelId);
+		if (!channel || typeof channel.send !== "function") {
+			return;
+		}
+		await channel.send({
+			content: lines.join("\n"),
+		});
+	} catch (error) {
+		console.error("Failed to send audit log:", error);
+	}
+}
+
 async function waitForJobResult(job, timeoutMs = JOB_RESULT_TIMEOUT_MS) {
 	const startedAt = Date.now();
 	while (Date.now() - startedAt < timeoutMs) {
@@ -100,10 +135,52 @@ async function waitForJobResult(job, timeoutMs = JOB_RESULT_TIMEOUT_MS) {
 async function queueJobAndRespond(interaction, type, payload, targetRole, requestedBy, responseTextBuilder) {
 	await interaction.deferReply();
 	const job = createJob(type, payload, targetRole, requestedBy);
+	await sendAuditLog([
+		"**JD Audit**",
+		`Action: queued \`${job.type}\``,
+		`Job: \`${job.id}\``,
+		`By: ${requestedBy.tag} (\`${requestedBy.discordUserId}\`)`,
+		`Server: \`${targetRole}\``,
+		`Payload: ${summarizePayload(payload)}`,
+	]);
 	if (typeof responseTextBuilder === "function") {
 		responseTextBuilder(job);
 	}
 	await waitForJobResult(job);
+	await sendAuditLog([
+		"**JD Audit**",
+		`Action: result for \`${job.type}\``,
+		`Job: \`${job.id}\``,
+		`Status: \`${job.status}\``,
+		`Result: ${job.result || "none"}`,
+		`Claimed By: \`${job.claimedBy?.jobId || "unclaimed"}\``,
+		`Completed By: \`${job.completedBy?.serverJobId || "n/a"}\``,
+	]);
+	await interaction.editReply(formatJobResult(job));
+	return job;
+}
+
+async function waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy) {
+	await interaction.deferReply();
+	await sendAuditLog([
+		"**JD Audit**",
+		`Action: queued \`${job.type}\``,
+		`Job: \`${job.id}\``,
+		`By: ${requestedBy.tag} (\`${requestedBy.discordUserId}\`)`,
+		`Server: \`${targetRole}\``,
+		`Target Server Job: \`${job.targetServerJobId || "none"}\``,
+		`Payload: ${summarizePayload(job.payload)}`,
+	]);
+	await waitForJobResult(job);
+	await sendAuditLog([
+		"**JD Audit**",
+		`Action: result for \`${job.type}\``,
+		`Job: \`${job.id}\``,
+		`Status: \`${job.status}\``,
+		`Result: ${job.result || "none"}`,
+		`Claimed By: \`${job.claimedBy?.jobId || "unclaimed"}\``,
+		`Completed By: \`${job.completedBy?.serverJobId || "n/a"}\``,
+	]);
 	await interaction.editReply(formatJobResult(job));
 	return job;
 }
@@ -410,6 +487,12 @@ client.on("interactionCreate", async (interaction) => {
 	}
 
 	if (!isAuthorizedInteraction(interaction)) {
+		await sendAuditLog([
+			"**JD Audit**",
+			"Action: unauthorized command attempt",
+			`By: ${interaction.user.tag} (\`${interaction.user.id}\`)`,
+			`Command: \`${interaction.commandName}\``,
+		]);
 		await interaction.reply({
 			content: "You do not have permission to use bridge commands.",
 			ephemeral: true,
@@ -439,9 +522,7 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("setkills", { targetUsername, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.deferReply();
-		await waitForJobResult(job);
-		await interaction.editReply(formatJobResult(job));
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
 	}
 
@@ -456,9 +537,7 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("buff", { targetUsername, stat, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.deferReply();
-		await waitForJobResult(job);
-		await interaction.editReply(formatJobResult(job));
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
 	}
 
@@ -472,9 +551,7 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("heal", { targetUsername, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.deferReply();
-		await waitForJobResult(job);
-		await interaction.editReply(formatJobResult(job));
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
 	}
 
@@ -488,9 +565,7 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("kick", { targetUsername, reason }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.deferReply();
-		await waitForJobResult(job);
-		await interaction.editReply(formatJobResult(job));
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
 	}
 
@@ -503,9 +578,7 @@ client.on("interactionCreate", async (interaction) => {
 		}
 		const job = createJob("return_to_main", { targetUsername }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
-		await interaction.deferReply();
-		await waitForJobResult(job);
-		await interaction.editReply(formatJobResult(job));
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
 	}
 
@@ -539,9 +612,7 @@ client.on("interactionCreate", async (interaction) => {
 
 		const job = createJob("duel", payload, targetRole, requestedBy);
 		job.targetServerJobId = targetServerJobId;
-		await interaction.deferReply();
-		await waitForJobResult(job);
-		await interaction.editReply(formatJobResult(job));
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
 	}
 
