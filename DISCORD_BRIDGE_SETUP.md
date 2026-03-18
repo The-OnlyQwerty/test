@@ -13,6 +13,8 @@ Supported job types:
 
 - `announce`
 - `setkills`
+- `setdeaths`
+- `setrating`
 - `buff`
 
 ## Backend setup
@@ -81,6 +83,8 @@ Also make sure `HttpService` is enabled in Roblox Game Settings.
 
 - `/announce message:<text> server:<any|main|training>`
 - `/setkills username:<roblox username> amount:<number> server:<any|main|training>`
+- `/setdeaths username:<roblox username> amount:<number> server:<any|main|training>`
+- `/setrating username:<roblox username> amount:<number> server:<any|main|training>`
 - `/buff username:<roblox username> stat:<Attack|Defense|Health|Mana|Stamina> amount:<number> server:<any|main|training>`
 - `/heal username:<roblox username> amount:<optional> server:<any|main|training>`
 - `/kick username:<roblox username> reason:<optional> server:<any|main|training>`

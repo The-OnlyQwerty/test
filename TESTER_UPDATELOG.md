@@ -1,9 +1,10 @@
-Test build focus: menu flow, combat, dummies, lock-on, camera, resources, and Sans animations.
+Test focus: menu flow, character select, combat, dummies, duels, training server, and lock-on.
 
 How to play:
-1. Open the main menu.
-2. Press Play.
-3. Pick `Sans` or `Magnus` in character select. Slots 3-5 should say they are unavailable.
+1. Open the loading screen, then main menu.
+2. Press `Play`.
+3. Pick `Sans` or `Magnus`. Slots 3-5 are not available yet.
+4. Use the top-right button to swap between `Main Game` and `Training`.
 
 Controls:
 `Mouse1` M1
@@ -13,27 +14,29 @@ Controls:
 `1-5` abilities
 `MMB` lock on
 `X` relock last target
-`H` hitbox debug if admin / Studio
 
 What to test:
-- Dying or resetting should send you back to the main menu.
-- You should only be able to change characters from the menu.
-- Sans has no M1, uses mana, regens mana, and now has idle/walk animations.
-- Magnus M1 should visibly hit and deal damage.
-- Stamina should regen and only be spent on dash.
-- Lock-on should work on players and dummies.
-- While locked on: camera FOV changes, target stays centered, camera shifts right, and your body faces the target.
-- Unlocking should restore normal camera/body behavior.
+- Death/reset should return you to the main menu.
+- Characters should only be selectable from the menu.
+- Sans: no M1, mana regen, idle/walk animations, mode swap on `Q/E`, counter lasts longer.
+- Magnus: M1 combo and all 5 abilities should hit correctly.
+- Block has cooldown, pulsing aura, and should fade out on release.
+- Cooldowns should only apply to the exact move used, not the same slot in other Sans modes.
+- Lock-on should center the target, shift camera right, and keep your body facing the target.
 
 Dummies:
-- `Target Dummy`: normal damage
-- `Blocking Dummy`: reduced damage
-- `Attacking Dummy`: attacks with a visible debug hitbox if hitboxes are enabled
-- All 3 should have names and HP bars above their heads
+- `Target Dummy` normal
+- `Blocking Dummy` blocks/reduces damage
+- `Attacking Dummy` attacks and shows hitbox if enabled
+- All dummies should respawn and show name + HP bar
 
-Credits should show:
-`The_OnlyQwerty: Owner`
-`Cavespider07: Animator`
-`Friday1234g: Map Builder`
+Duels:
+- `/1v1 player` should send a request
+- `Y/N` or `/accept` `/decline` should work
+- `/1v1 dummy` should send you to the duel arena
 
-When reporting bugs, include: character used, target used, move/input, whether lock-on was active, whether hitbox debug was on, expected result, and actual result.
+Training server:
+- Players should not damage each other
+- Dummies should still take damage
+
+Report bugs with: character, move, target, server (`main` or `training`), lock-on on/off, expected result, actual result.
