@@ -13,6 +13,12 @@ local combatRequest = remotes:WaitForChild("CombatRequest")
 local combatState = remotes:WaitForChild("CombatState")
 
 local cooldowns = {}
+local profileStats = {
+	RankedRating = Constants.RANKED_START_RATING,
+	RankedWins = 0,
+	RankedLosses = 0,
+}
+local rankedQueued = false
 local theme = {
 	bg = Color3.fromRGB(12, 14, 18),
 	panel = Color3.fromRGB(24, 28, 36),
@@ -165,7 +171,7 @@ local selectorPanel = create("Frame", {
 	Name = "Selector",
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -18, 0, 18),
-	Size = UDim2.new(0, 236, 0, 108),
+	Size = UDim2.new(0, 236, 0, 156),
 	BackgroundColor3 = theme.panel,
 	BorderSizePixel = 0,
 	Parent = root,
@@ -208,6 +214,31 @@ local modeButton = create("TextButton", {
 	Parent = selectorPanel,
 })
 create("UICorner", {CornerRadius = UDim.new(0, 12), Parent = modeButton})
+
+local rankedButton = create("TextButton", {
+	Position = UDim2.new(0, 16, 0, 100),
+	Size = UDim2.new(1, -32, 0, 30),
+	BackgroundColor3 = theme.gold,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	Text = "Join Ranked",
+	TextColor3 = theme.bg,
+	TextSize = 14,
+	Parent = selectorPanel,
+})
+create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = rankedButton})
+
+local rankedStatus = create("TextLabel", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 132),
+	Size = UDim2.new(1, -32, 0, 16),
+	Font = Enum.Font.Gotham,
+	Text = "Ranked 1000 | W 0 | L 0",
+	TextColor3 = theme.subtle,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = selectorPanel,
+})
 
 local hotkeys = create("TextLabel", {
 	BackgroundTransparency = 1,
@@ -253,6 +284,8 @@ create("TextLabel", {
 	Font = Enum.Font.Gotham,
 	Text = table.concat({
 		"/setkills <player> <amount>",
+		"/setdeaths <player> <amount>",
+		"/setrating <player> <amount>",
 		"/buff <player> Attack <amount>",
 		"/buff <player> Defense <amount>",
 		"/buff <player> Health <amount>",
@@ -390,6 +423,10 @@ local function updateSelectorState()
 	local kit = getCurrentKit()
 	modeButton.Visible = kit ~= nil and kit.Modes ~= nil
 	modeButton.Text = string.format("Switch Mode%s", kit and kit.Modes and (" [" .. (getMode() or "") .. "]") or "")
+	rankedButton.Text = rankedQueued and "Leave Ranked Queue" or "Join Ranked Queue"
+	rankedButton.BackgroundColor3 = rankedQueued and theme.red or theme.gold
+	rankedButton.TextColor3 = rankedQueued and theme.white or theme.bg
+	rankedStatus.Text = string.format("Ranked %d | W %d | L %d%s", profileStats.RankedRating or Constants.RANKED_START_RATING, profileStats.RankedWins or 0, profileStats.RankedLosses or 0, rankedQueued and " | Queued" or "")
 end
 
 local function updateAbilityLabels()
@@ -477,6 +514,12 @@ modeButton.MouseButton1Click:Connect(function()
 	})
 end)
 
+rankedButton.MouseButton1Click:Connect(function()
+	combatRequest:FireServer({
+		Action = "ToggleRankedQueue",
+	})
+end)
+
 combatState.OnClientEvent:Connect(function(payload)
 	if typeof(payload) ~= "table" then
 		return
@@ -484,6 +527,14 @@ combatState.OnClientEvent:Connect(function(payload)
 
 	if payload.Type == "Ability" and payload.Player == player.UserId then
 		cooldowns[payload.CooldownKey or getCooldownKey(payload.Slot)] = os.clock() + payload.Cooldown
+	elseif payload.Type == "Profile" then
+		profileStats.RankedRating = payload.RankedRating or Constants.RANKED_START_RATING
+		profileStats.RankedWins = payload.RankedWins or 0
+		profileStats.RankedLosses = payload.RankedLosses or 0
+		task.defer(refreshAll)
+	elseif payload.Type == "RankedQueueStatus" then
+		rankedQueued = payload.InQueue == true
+		task.defer(refreshAll)
 	elseif payload.Type == "KitChanged" and payload.KitId then
 		table.clear(cooldowns)
 		task.defer(refreshAll)

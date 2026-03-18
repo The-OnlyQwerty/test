@@ -1,8 +1,11 @@
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
+local MemoryStoreService = game:GetService("MemoryStoreService")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
@@ -16,6 +19,9 @@ local CombatService = {}
 CombatService.__index = CombatService
 
 local profileStore = DataStoreService:GetDataStore("JudgementDividedProfiles_v1")
+local rankedQueueStore = MemoryStoreService:GetSortedMap("JudgementDividedRankedQueue_v1")
+local rankedAssignmentStore = MemoryStoreService:GetSortedMap("JudgementDividedRankedAssignments_v1")
+local rankedLockStore = MemoryStoreService:GetSortedMap("JudgementDividedRankedLock_v1")
 
 local function now()
 	return os.clock()
@@ -114,6 +120,8 @@ function CombatService.new(remotes)
 	self.PlayerProfiles = {}
 	self.PendingDuelRequests = {}
 	self.ActiveDuels = {}
+	self.RankedQueue = {}
+	self.RankedMatchData = nil
 	self.BridgeStatus = "unknown"
 	self.Effects = EffectService.new()
 	self.Hitboxes = HitboxService.new(remotes)
@@ -122,6 +130,10 @@ end
 
 function CombatService:IsTrainingServer()
 	return workspace:GetAttribute(Constants.TRAINING_SERVER_ATTRIBUTE) == true or isTrainingPlaceId(game.PlaceId)
+end
+
+function CombatService:IsRankedMatchServer()
+	return self.RankedMatchData ~= nil
 end
 
 function CombatService:GetServerRole()
@@ -247,6 +259,21 @@ function CombatService:Init()
 	task.spawn(function()
 		self:RunBridgeHeartbeatLoop()
 	end)
+
+	task.spawn(function()
+		while true do
+			task.wait(Constants.RANKED_MATCHMAKING_INTERVAL)
+			self:TryStartRankedMatch()
+		end
+	end)
+
+	task.spawn(function()
+		while true do
+			task.wait(Constants.RANKED_ASSIGNMENT_POLL_INTERVAL)
+			self:CheckRankedAssignments()
+			self:TryStartPendingRankedMatch()
+		end
+	end)
 end
 
 function CombatService:GetDefaultState()
@@ -254,6 +281,8 @@ function CombatService:GetDefaultState()
 		KitId = "Sans",
 		LastM1At = 0,
 		ComboStep = 0,
+		M1CooldownUntil = 0,
+		RankedQueueKey = nil,
 		Cooldowns = {},
 		IsBlocking = false,
 		IsStunnedUntil = 0,
@@ -273,6 +302,10 @@ end
 function CombatService:GetDefaultProfile()
 	return {
 		Kills = 0,
+		Deaths = 0,
+		RankedRating = Constants.RANKED_START_RATING,
+		RankedWins = 0,
+		RankedLosses = 0,
 		SelectedSkins = {
 			Sans = "Default",
 			Magnus = "Default",
@@ -288,6 +321,10 @@ function CombatService:LoadProfile(player)
 	local profile = self:GetDefaultProfile()
 	if success and type(data) == "table" then
 		profile.Kills = tonumber(data.Kills) or 0
+		profile.Deaths = tonumber(data.Deaths) or 0
+		profile.RankedRating = tonumber(data.RankedRating) or Constants.RANKED_START_RATING
+		profile.RankedWins = tonumber(data.RankedWins) or 0
+		profile.RankedLosses = tonumber(data.RankedLosses) or 0
 		if type(data.SelectedSkins) == "table" then
 			for kitId, skinId in pairs(data.SelectedSkins) do
 				profile.SelectedSkins[kitId] = skinId
@@ -307,6 +344,10 @@ function CombatService:SaveProfile(player)
 	pcall(function()
 		profileStore:SetAsync(tostring(player.UserId), {
 			Kills = profile.Kills,
+			Deaths = profile.Deaths,
+			RankedRating = profile.RankedRating,
+			RankedWins = profile.RankedWins,
+			RankedLosses = profile.RankedLosses,
 			SelectedSkins = profile.SelectedSkins,
 		})
 	end)
@@ -314,6 +355,56 @@ end
 
 function CombatService:GetProfile(player)
 	return self.PlayerProfiles[player]
+end
+
+function CombatService:EnsureLeaderstats(player)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then
+		leaderstats = Instance.new("Folder")
+		leaderstats.Name = "leaderstats"
+		leaderstats.Parent = player
+	end
+
+	local function ensureValue(name, className)
+		local valueObject = leaderstats:FindFirstChild(name)
+		if not valueObject then
+			valueObject = Instance.new(className)
+			valueObject.Name = name
+			valueObject.Parent = leaderstats
+		end
+		return valueObject
+	end
+
+	ensureValue("Kills", "IntValue")
+	ensureValue("Deaths", "IntValue")
+	ensureValue("KDR", "NumberValue")
+	ensureValue("Rating", "IntValue")
+end
+
+function CombatService:UpdateLeaderstats(player)
+	local profile = self:GetProfile(player)
+	local leaderstats = player and player:FindFirstChild("leaderstats")
+	if not profile or not leaderstats then
+		return
+	end
+
+	local kills = leaderstats:FindFirstChild("Kills")
+	local deaths = leaderstats:FindFirstChild("Deaths")
+	local kdr = leaderstats:FindFirstChild("KDR")
+	local rating = leaderstats:FindFirstChild("Rating")
+
+	if kills then
+		kills.Value = profile.Kills or 0
+	end
+	if deaths then
+		deaths.Value = profile.Deaths or 0
+	end
+	if kdr then
+		kdr.Value = self:GetKDR(player)
+	end
+	if rating then
+		rating.Value = profile.RankedRating or Constants.RANKED_START_RATING
+	end
 end
 
 function CombatService:IsSkinUnlocked(player, kitId, skinId)
@@ -350,11 +441,33 @@ function CombatService:SendProfile(player)
 		return
 	end
 
+	self:UpdateLeaderstats(player)
+
 	self.Remotes.CombatState:FireClient(player, {
 		Type = "Profile",
 		Kills = profile.Kills,
+		Deaths = profile.Deaths,
+		KDR = self:GetKDR(player),
+		RankedRating = profile.RankedRating,
+		RankedWins = profile.RankedWins,
+		RankedLosses = profile.RankedLosses,
 		SelectedSkins = profile.SelectedSkins,
 	})
+end
+
+function CombatService:GetKDR(player)
+	local profile = self:GetProfile(player)
+	if not profile then
+		return 0
+	end
+
+	local kills = tonumber(profile.Kills) or 0
+	local deaths = tonumber(profile.Deaths) or 0
+	if deaths <= 0 then
+		return kills
+	end
+
+	return math.floor((kills / deaths) * 100) / 100
 end
 
 function CombatService:AddKill(player, amount)
@@ -366,6 +479,350 @@ function CombatService:AddKill(player, amount)
 	profile.Kills = math.max(0, (profile.Kills or 0) + (amount or 1))
 	self:SaveProfile(player)
 	self:SendProfile(player)
+end
+
+function CombatService:AddDeath(player, amount)
+	local profile = self:GetProfile(player)
+	if not profile then
+		return
+	end
+
+	profile.Deaths = math.max(0, (profile.Deaths or 0) + (amount or 1))
+	self:SaveProfile(player)
+	self:SendProfile(player)
+end
+
+function CombatService:GetPlayerJoinTeleportData(player)
+	local joinData = player:GetJoinData()
+	if type(joinData) == "table" and type(joinData.TeleportData) == "table" then
+		return joinData.TeleportData
+	end
+	return nil
+end
+
+function CombatService:UpdateRankedMatchDataFromPlayer(player)
+	if self.RankedMatchData then
+		return
+	end
+
+	local teleportData = self:GetPlayerJoinTeleportData(player)
+	if type(teleportData) == "table" and teleportData.RankedMatch == true then
+		self.RankedMatchData = teleportData
+	end
+end
+
+function CombatService:GetRankedStats(player)
+	local profile = self:GetProfile(player)
+	if not profile then
+		return Constants.RANKED_START_RATING, 0, 0
+	end
+
+	return profile.RankedRating or Constants.RANKED_START_RATING, profile.RankedWins or 0, profile.RankedLosses or 0
+end
+
+function CombatService:SendRankedQueueStatus(player, inQueue)
+	if not player or not player.Parent then
+		return
+	end
+
+	self.Remotes.CombatState:FireClient(player, {
+		Type = "RankedQueueStatus",
+		InQueue = inQueue == true,
+	})
+end
+
+function CombatService:IsQueuedForRanked(player)
+	local state = self:GetState(player)
+	return state ~= nil and state.RankedQueueKey ~= nil
+end
+
+function CombatService:MakeRankedQueueKey(player)
+	return string.format("%010d_%d", os.time(), player.UserId)
+end
+
+function CombatService:SetRankedAssignmentForPlayers(players, assignment)
+	for _, player in ipairs(players) do
+		pcall(function()
+			rankedAssignmentStore:SetAsync(tostring(player.UserId), assignment, Constants.RANKED_ASSIGNMENT_TTL)
+		end)
+	end
+end
+
+function CombatService:TryClaimMatchmakingLock()
+	local acquired = false
+	pcall(function()
+		rankedLockStore:UpdateAsync("matchmaker", function(current)
+			if type(current) == "table" and current.JobId ~= game.JobId and (current.ExpiresAt or 0) > os.time() then
+				return nil
+			end
+			acquired = true
+			return {
+				JobId = game.JobId,
+				ExpiresAt = os.time() + Constants.RANKED_MATCH_LOCK_SECONDS,
+			}
+		end, Constants.RANKED_MATCH_LOCK_SECONDS)
+	end)
+	return acquired
+end
+
+function CombatService:LeaveRankedQueue(player, silent)
+	local state = self:GetState(player)
+	if state and state.RankedQueueKey then
+		pcall(function()
+			rankedQueueStore:RemoveAsync(state.RankedQueueKey)
+		end)
+		state.RankedQueueKey = nil
+		self:SendRankedQueueStatus(player, false)
+		if not silent then
+			self:SendMessage(player, "You left the ranked queue.")
+		end
+	elseif not silent then
+		self:SendMessage(player, "You are not in the ranked queue.")
+	end
+end
+
+function CombatService:ApplyRankedResult(winnerPlayer, loserPlayer)
+	local winnerProfile = self:GetProfile(winnerPlayer)
+	local loserProfile = self:GetProfile(loserPlayer)
+	if not winnerProfile or not loserProfile then
+		return
+	end
+
+	local winnerRating = tonumber(winnerProfile.RankedRating) or Constants.RANKED_START_RATING
+	local loserRating = tonumber(loserProfile.RankedRating) or Constants.RANKED_START_RATING
+	local winnerExpected = 1 / (1 + 10 ^ ((loserRating - winnerRating) / 400))
+	local loserExpected = 1 / (1 + 10 ^ ((winnerRating - loserRating) / 400))
+	local kFactor = Constants.RANKED_K_FACTOR
+
+	local winnerGain = math.max(1, math.floor(kFactor * (1 - winnerExpected) + 0.5))
+	local loserLoss = math.max(1, math.floor(kFactor * (0 - loserExpected) * -1 + 0.5))
+
+	winnerProfile.RankedRating = winnerRating + winnerGain
+	winnerProfile.RankedWins = (winnerProfile.RankedWins or 0) + 1
+	loserProfile.RankedRating = math.max(0, loserRating - loserLoss)
+	loserProfile.RankedLosses = (loserProfile.RankedLosses or 0) + 1
+
+	self:SaveProfile(winnerPlayer)
+	self:SaveProfile(loserPlayer)
+	self:SendProfile(winnerPlayer)
+	self:SendProfile(loserPlayer)
+	self:SendMessage(winnerPlayer, string.format("Ranked win: +%d rating (%d).", winnerGain, winnerProfile.RankedRating))
+	self:SendMessage(loserPlayer, string.format("Ranked loss: -%d rating (%d).", loserLoss, loserProfile.RankedRating))
+end
+
+function CombatService:TryStartRankedMatch()
+	if self:IsTrainingServer() or self:IsRankedMatchServer() then
+		return
+	end
+
+	if not self:TryClaimMatchmakingLock() then
+		return
+	end
+
+	local success, entries = pcall(function()
+		return rankedQueueStore:GetRangeAsync(Enum.SortDirection.Ascending, 10)
+	end)
+	if not success or type(entries) ~= "table" or #entries < 2 then
+		return
+	end
+
+	local chosen = {}
+	local chosenCount = 0
+	for _, entry in ipairs(entries) do
+		if type(entry) == "table" and type(entry.key) == "string" and type(entry.value) == "table" then
+			local value = entry.value
+			if value.UserId and value.JobId and value.PlaceId and not chosen[value.UserId] then
+				chosen[value.UserId] = {
+					Key = entry.key,
+					Value = value,
+				}
+				chosenCount += 1
+				if chosenCount >= 2 then
+					break
+				end
+			end
+		end
+	end
+
+	local matched = {}
+	for _, item in pairs(chosen) do
+		table.insert(matched, item)
+	end
+	if #matched < 2 then
+		return
+	end
+
+	if RunService:IsStudio() then
+		local playerA = Players:GetPlayerByUserId(matched[1].Value.UserId)
+		local playerB = Players:GetPlayerByUserId(matched[2].Value.UserId)
+		if playerA and playerB then
+			for _, item in ipairs(matched) do
+				pcall(function()
+					rankedQueueStore:RemoveAsync(item.Key)
+				end)
+			end
+			local stateA = self:GetState(playerA)
+			local stateB = self:GetState(playerB)
+			if stateA then
+				stateA.RankedQueueKey = nil
+			end
+			if stateB then
+				stateB.RankedQueueKey = nil
+			end
+			self:SendRankedQueueStatus(playerA, false)
+			self:SendRankedQueueStatus(playerB, false)
+			self:StartOneVOne(playerA, playerB, {
+				IsRanked = true,
+				ModeName = "Ranked",
+			})
+		end
+		return
+	end
+
+	for _, item in ipairs(matched) do
+		pcall(function()
+			rankedQueueStore:RemoveAsync(item.Key)
+		end)
+	end
+
+	local reserveSuccess, reservedServerCode = pcall(function()
+		return TeleportService:ReserveServer(Constants.MAIN_GAME_PLACE_ID)
+	end)
+	if not reserveSuccess or not reservedServerCode then
+		return
+	end
+
+	local matchId = HttpService:GenerateGUID(false)
+	local assignment = {
+		MatchId = matchId,
+		ReservedServerCode = reservedServerCode,
+		RankedMatch = true,
+		ModeName = "Ranked",
+		Participants = {
+			matched[1].Value.UserId,
+			matched[2].Value.UserId,
+		},
+	}
+
+	self:SetRankedAssignmentForPlayers({
+		{UserId = matched[1].Value.UserId},
+		{UserId = matched[2].Value.UserId},
+	}, assignment)
+end
+
+function CombatService:CheckRankedAssignments()
+	if self:IsTrainingServer() then
+		return
+	end
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		local state = self:GetState(player)
+		local ok, assignment = pcall(function()
+			return rankedAssignmentStore:GetAsync(tostring(player.UserId))
+		end)
+		if ok and type(assignment) == "table" and assignment.ReservedServerCode then
+			if state then
+				state.RankedQueueKey = nil
+			end
+			self:SendRankedQueueStatus(player, false)
+			pcall(function()
+				rankedAssignmentStore:RemoveAsync(tostring(player.UserId))
+			end)
+			self:SendMessage(player, "Ranked match found. Teleporting...")
+			pcall(function()
+				TeleportService:TeleportToPrivateServer(
+					Constants.MAIN_GAME_PLACE_ID,
+					assignment.ReservedServerCode,
+					{player},
+					nil,
+					assignment
+				)
+			end)
+		end
+	end
+end
+
+function CombatService:TryStartPendingRankedMatch()
+	if not self:IsRankedMatchServer() or not self.RankedMatchData or self.RankedMatchData.Started then
+		return
+	end
+
+	local participants = {}
+	local participantSet = {}
+	for _, userId in ipairs(self.RankedMatchData.Participants or {}) do
+		participantSet[tonumber(userId)] = true
+	end
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if participantSet[player.UserId] then
+			table.insert(participants, player)
+		end
+	end
+
+	if #participants < 2 then
+		return
+	end
+
+	self.RankedMatchData.Started = true
+	self:StartOneVOne(participants[1], participants[2], {
+		IsRanked = true,
+		ModeName = "Ranked",
+	})
+end
+
+function CombatService:QueueForRanked(player)
+	if self:IsTrainingServer() then
+		self:SendMessage(player, "Ranked is disabled in the training server.")
+		return
+	end
+
+	if self:IsRankedMatchServer() then
+		self:SendMessage(player, "You are already in a ranked match server.")
+		return
+	end
+
+	local character = player.Character
+	local humanoid = getHumanoid(character)
+	if not character or not humanoid or humanoid.Health <= 0 then
+		self:SendMessage(player, "You need to be alive to queue ranked.")
+		return
+	end
+
+	if self.ActiveDuels[player] then
+		self:SendMessage(player, "You cannot queue ranked while in a duel.")
+		return
+	end
+
+	if self:IsQueuedForRanked(player) then
+		self:SendMessage(player, "You are already in the ranked queue.")
+		return
+	end
+
+	local state = self:GetState(player)
+	if not state then
+		return
+	end
+
+	local queueKey = self:MakeRankedQueueKey(player)
+	local rating = self:GetRankedStats(player)
+	local queued = pcall(function()
+		rankedQueueStore:SetAsync(queueKey, {
+			UserId = player.UserId,
+			JobId = game.JobId,
+			PlaceId = game.PlaceId,
+			DisplayName = player.DisplayName,
+			Name = player.Name,
+			Rating = rating,
+		}, Constants.RANKED_QUEUE_ENTRY_TTL)
+	end)
+	if not queued then
+		self:SendMessage(player, "Failed to join the ranked queue.")
+		return
+	end
+
+	state.RankedQueueKey = queueKey
+	self:SendRankedQueueStatus(player, true)
+	self:SendMessage(player, string.format("Joined ranked queue. Rating: %d", rating))
 end
 
 function CombatService:FindPlayerByUserId(userId)
@@ -424,6 +881,38 @@ function CombatService:HandleBridgeJob(job)
 		self:SendProfile(target)
 		self:SendMessage(target, string.format("Your kills were set to %d by Discord admin.", profile.Kills))
 		return true, "kills updated"
+	elseif job.type == "setdeaths" then
+		local payload = job.payload or {}
+		local target = self:FindPlayerByBridgeTarget(payload.targetUsername or payload.targetUserId)
+		local amount = tonumber(payload.amount)
+		if not target or not amount then
+			return false, "target player not online or amount invalid"
+		end
+		local profile = self:GetProfile(target)
+		if not profile then
+			return false, "profile missing"
+		end
+		profile.Deaths = math.max(0, math.floor(amount))
+		self:SaveProfile(target)
+		self:SendProfile(target)
+		self:SendMessage(target, string.format("Your deaths were set to %d by Discord admin.", profile.Deaths))
+		return true, "deaths updated"
+	elseif job.type == "setrating" then
+		local payload = job.payload or {}
+		local target = self:FindPlayerByBridgeTarget(payload.targetUsername or payload.targetUserId)
+		local amount = tonumber(payload.amount)
+		if not target or not amount then
+			return false, "target player not online or amount invalid"
+		end
+		local profile = self:GetProfile(target)
+		if not profile then
+			return false, "profile missing"
+		end
+		profile.RankedRating = math.max(0, math.floor(amount))
+		self:SaveProfile(target)
+		self:SendProfile(target)
+		self:SendMessage(target, string.format("Your ranked rating was set to %d by Discord admin.", profile.RankedRating))
+		return true, "rating updated"
 	elseif job.type == "buff" then
 		local payload = job.payload or {}
 		local target = self:FindPlayerByBridgeTarget(payload.targetUsername or payload.targetUserId)
@@ -569,7 +1058,9 @@ function CombatService:RunBridgeHeartbeatLoop()
 end
 
 function CombatService:OnPlayerAdded(player)
+	self:UpdateRankedMatchDataFromPlayer(player)
 	self:LoadProfile(player)
+	self:EnsureLeaderstats(player)
 	local state = self:GetDefaultState()
 	self.PlayerState[player] = state
 
@@ -588,6 +1079,11 @@ function CombatService:OnPlayerAdded(player)
 	self:SendProfile(player)
 	if self:IsTrainingServer() then
 		self:SendMessage(player, "Training server: PvP is disabled. Dummies can still be attacked.")
+	elseif self:IsRankedMatchServer() then
+		self:SendMessage(player, "Ranked match server: preparing your isolated 1v1.")
+		task.delay(2, function()
+			self:TryStartPendingRankedMatch()
+		end)
 	end
 end
 
@@ -601,6 +1097,7 @@ function CombatService:OnCharacterAdded(player, character)
 
 	state.LastM1At = 0
 	state.ComboStep = 0
+	state.M1CooldownUntil = 0
 	state.IsBlocking = false
 	state.IsStunnedUntil = 0
 	state.LastDashAt = 0
@@ -865,6 +1362,8 @@ function CombatService:ReturnToMainMap(target)
 end
 
 function CombatService:CleanupDuelState(target)
+	self:LeaveRankedQueue(target, true)
+
 	local duel = self.ActiveDuels[target]
 	if duel then
 		self.ActiveDuels[duel.A] = nil
@@ -895,15 +1394,39 @@ function CombatService:ResolveDuel(winner, loser)
 
 	if winnerPlayer and loserPlayer then
 		self:AddKill(winnerPlayer, 1)
+		self:AddDeath(loserPlayer, 1)
+		if duel.IsRanked then
+			self:ApplyRankedResult(winnerPlayer, loserPlayer)
+		end
 	end
 
 	self.Remotes.CombatState:FireAllClients({
 		Type = "DuelEnded",
 		Winner = winnerName,
 		Loser = loserName,
+		Mode = duel.ModeName or "1v1",
 	})
 
 	task.delay(Constants.DUEL_RETURN_DELAY, function()
+		if duel.IsRanked and winnerPlayer and loserPlayer then
+			local playersToReturn = {}
+			if winnerPlayer.Parent then
+				table.insert(playersToReturn, winnerPlayer)
+			end
+			if loserPlayer.Parent then
+				table.insert(playersToReturn, loserPlayer)
+			end
+			if #playersToReturn > 0 then
+				for _, player in ipairs(playersToReturn) do
+					self:SendMessage(player, "Returning to main server...")
+				end
+				pcall(function()
+					TeleportService:TeleportAsync(Constants.MAIN_GAME_PLACE_ID, playersToReturn)
+				end)
+			end
+			return
+		end
+
 		if winnerPlayer and winnerPlayer.Character then
 			self:ResetCombatState(winnerPlayer)
 			self:ReturnToMainMap(winnerPlayer)
@@ -937,6 +1460,7 @@ function CombatService:HandleCharacterDeath(player)
 	if killerUserId then
 		local killer = Players:GetPlayerByUserId(killerUserId)
 		if killer and killer ~= player then
+			self:AddDeath(player, 1)
 			self:AddKill(killer, 1)
 			self:SendMessage(killer, string.format("You defeated %s.", player.DisplayName))
 		end
@@ -956,6 +1480,7 @@ function CombatService:ResetCombatState(player)
 
 	state.LastM1At = 0
 	state.ComboStep = 0
+	state.M1CooldownUntil = 0
 	state.Cooldowns = {}
 	state.IsBlocking = false
 	state.IsStunnedUntil = 0
@@ -1008,7 +1533,8 @@ function CombatService:ResetDummyState(dummy)
 	return true
 end
 
-function CombatService:StartOneVOne(challenger, opponent)
+function CombatService:StartOneVOne(challenger, opponent, options)
+	options = options or {}
 	local challengerCharacter = challenger.Character
 	local opponentCharacter = getTargetCharacter(opponent)
 	local challengerRoot = getCharacterRoot(challengerCharacter)
@@ -1020,6 +1546,7 @@ function CombatService:StartOneVOne(challenger, opponent)
 	local spawnB = duelFolder and duelFolder:FindFirstChild("SpawnB")
 	local opponentPlayer = getTargetPlayer(opponent)
 	local opponentName = opponentPlayer and opponentPlayer.DisplayName or (opponentCharacter and (opponentCharacter:GetAttribute("DisplayName") or opponentCharacter.Name)) or "Opponent"
+	local modeName = options.ModeName or "1v1"
 
 	if not challengerRoot or not opponentRoot or not challengerHumanoid or not opponentHumanoid then
 		self:SendMessage(challenger, "Both fighters need active characters for /1v1.")
@@ -1036,11 +1563,18 @@ function CombatService:StartOneVOne(challenger, opponent)
 		return
 	end
 
+	self:LeaveRankedQueue(challenger, true)
+	if opponentPlayer then
+		self:LeaveRankedQueue(opponentPlayer, true)
+	end
+
 	self.ActiveDuels[challenger] = {
 		A = challenger,
 		B = opponent,
 		StartedAt = now(),
 		Resolved = false,
+		IsRanked = options.IsRanked == true,
+		ModeName = modeName,
 	}
 	self.ActiveDuels[opponent] = self.ActiveDuels[challenger]
 
@@ -1056,12 +1590,14 @@ function CombatService:StartOneVOne(challenger, opponent)
 			Type = "DuelCountdown",
 			Value = count,
 			Opponent = opponentName,
+			Mode = modeName,
 		})
 		if opponentPlayer then
 			self.Remotes.CombatState:FireClient(opponentPlayer, {
 				Type = "DuelCountdown",
 				Value = count,
 				Opponent = challenger.DisplayName,
+				Mode = modeName,
 			})
 		end
 		task.wait(1)
@@ -1070,9 +1606,9 @@ function CombatService:StartOneVOne(challenger, opponent)
 	challengerRoot.CFrame = spawnA.CFrame + Vector3.new(0, 3, 0)
 	opponentRoot.CFrame = spawnB.CFrame + Vector3.new(0, 3, 0)
 
-	self:SendMessage(challenger, string.format("Starting 1v1 with %s.", opponentName))
+	self:SendMessage(challenger, string.format("Starting %s with %s.", modeName, opponentName))
 	if opponentPlayer then
-		self:SendMessage(opponentPlayer, string.format("%s started a 1v1 with you.", challenger.DisplayName))
+		self:SendMessage(opponentPlayer, string.format("%s started a %s with you.", challenger.DisplayName, modeName))
 	end
 end
 
@@ -1160,6 +1696,36 @@ function CombatService:HandleAdminCommand(player, command, args)
 			self:SendMessage(player, string.format("%s kills set to %d.", target.DisplayName, profile.Kills))
 		end
 		return true
+	elseif command == "setdeaths" then
+		local target = self:FindPlayerByText(player, args[1] or "")
+		local amount = tonumber(args[2])
+		if not target or not amount then
+			self:SendMessage(player, "Usage: /setdeaths <player> <amount>")
+			return true
+		end
+		local profile = self:GetProfile(target)
+		if profile then
+			profile.Deaths = math.max(0, math.floor(amount))
+			self:SaveProfile(target)
+			self:SendProfile(target)
+			self:SendMessage(player, string.format("%s deaths set to %d.", target.DisplayName, profile.Deaths))
+		end
+		return true
+	elseif command == "setrating" then
+		local target = self:FindPlayerByText(player, args[1] or "")
+		local amount = tonumber(args[2])
+		if not target or not amount then
+			self:SendMessage(player, "Usage: /setrating <player> <amount>")
+			return true
+		end
+		local profile = self:GetProfile(target)
+		if profile then
+			profile.RankedRating = math.max(0, math.floor(amount))
+			self:SaveProfile(target)
+			self:SendProfile(target)
+			self:SendMessage(player, string.format("%s rating set to %d.", target.DisplayName, profile.RankedRating))
+		end
+		return true
 	elseif command == "buff" then
 		local target = self:FindPlayerByText(player, args[1] or "")
 		local statName = args[2]
@@ -1215,6 +1781,16 @@ function CombatService:HandleChatCommand(player, message)
 		return
 	elseif command == "decline" then
 		self:RespondToDuelRequest(player, false)
+		return
+	elseif command == "ranked" then
+		self:QueueForRanked(player)
+		return
+	elseif command == "unranked" then
+		self:LeaveRankedQueue(player, false)
+		return
+	elseif command == "rankedstats" then
+		local rating, wins, losses = self:GetRankedStats(player)
+		self:SendMessage(player, string.format("Ranked Rating: %d | W: %d | L: %d", rating, wins, losses))
 		return
 	elseif self:HandleAdminCommand(player, command, args) then
 		return
@@ -1514,6 +2090,10 @@ function CombatService:TryM1(player)
 		return
 	end
 
+	if state.M1CooldownUntil > now() then
+		return
+	end
+
 	if not kit.M1Damage then
 		if kit.DisplayName == "Sans" then
 			self:SendMessage(player, "Sans has no M1 combo.")
@@ -1548,6 +2128,11 @@ function CombatService:TryM1(player)
 		Player = player.UserId,
 		Combo = comboIndex,
 	})
+
+	if comboIndex >= #kit.M1Damage and (kit.M1ComboCooldown or 0) > 0 then
+		state.M1CooldownUntil = now() + kit.M1ComboCooldown
+		state.ComboStep = 0
+	end
 end
 
 function CombatService:TryDash(player)
@@ -1998,6 +2583,12 @@ function CombatService:HandleRequest(player, payload)
 		end
 	elseif action == "RequestProfile" then
 		self:SendProfile(player)
+	elseif action == "ToggleRankedQueue" then
+		if self:IsQueuedForRanked(player) then
+			self:LeaveRankedQueue(player, false)
+		else
+			self:QueueForRanked(player)
+		end
 	elseif action == "RespondToDuel" then
 		self:RespondToDuelRequest(player, payload.Accepted == true)
 	elseif action == "SwitchMode" then

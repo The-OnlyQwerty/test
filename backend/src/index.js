@@ -349,6 +349,44 @@ const commands = [
 				)
 		),
 	new SlashCommandBuilder()
+		.setName("setdeaths")
+		.setDescription("Set a player's death count")
+		.addStringOption((option) =>
+			option.setName("username").setDescription("Roblox username/display name").setRequired(true)
+		)
+		.addIntegerOption((option) =>
+			option.setName("amount").setDescription("Death amount").setRequired(true)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("server")
+				.setDescription("Which game server should receive this")
+				.addChoices(
+					{ name: "Any", value: "any" },
+					{ name: "Main", value: "main" },
+					{ name: "Training", value: "training" }
+				)
+		),
+	new SlashCommandBuilder()
+		.setName("setrating")
+		.setDescription("Set a player's ranked rating")
+		.addStringOption((option) =>
+			option.setName("username").setDescription("Roblox username/display name").setRequired(true)
+		)
+		.addIntegerOption((option) =>
+			option.setName("amount").setDescription("New ranked rating").setRequired(true)
+		)
+		.addStringOption((option) =>
+			option
+				.setName("server")
+				.setDescription("Which game server should receive this")
+				.addChoices(
+					{ name: "Any", value: "any" },
+					{ name: "Main", value: "main" },
+					{ name: "Training", value: "training" }
+				)
+		),
+	new SlashCommandBuilder()
 		.setName("buff")
 		.setDescription("Buff a player's stat")
 		.addStringOption((option) =>
@@ -554,6 +592,34 @@ client.on("interactionCreate", async (interaction) => {
 			return;
 		}
 		const job = createJob("setkills", { targetUsername, amount }, targetRole, requestedBy);
+		job.targetServerJobId = targetPresence.presence.jobId;
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
+		return;
+	}
+
+	if (interaction.commandName === "setdeaths") {
+		const targetUsername = interaction.options.getString("username", true);
+		const amount = interaction.options.getInteger("amount", true);
+		const targetPresence = findPresenceForPlayer(targetUsername, targetRole);
+		if (!targetPresence) {
+			await interaction.reply(`Could not find \`${targetUsername}\` online in \`${targetRole}\`.`);
+			return;
+		}
+		const job = createJob("setdeaths", { targetUsername, amount }, targetRole, requestedBy);
+		job.targetServerJobId = targetPresence.presence.jobId;
+		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
+		return;
+	}
+
+	if (interaction.commandName === "setrating") {
+		const targetUsername = interaction.options.getString("username", true);
+		const amount = interaction.options.getInteger("amount", true);
+		const targetPresence = findPresenceForPlayer(targetUsername, targetRole);
+		if (!targetPresence) {
+			await interaction.reply(`Could not find \`${targetUsername}\` online in \`${targetRole}\`.`);
+			return;
+		}
+		const job = createJob("setrating", { targetUsername, amount }, targetRole, requestedBy);
 		job.targetServerJobId = targetPresence.presence.jobId;
 		await waitForExistingJobAndRespond(interaction, job, targetRole, requestedBy);
 		return;
