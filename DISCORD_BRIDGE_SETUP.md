@@ -27,6 +27,10 @@ Supported job types:
    - `DISCORD_GUILD_ID` (recommended during testing)
    - `DISCORD_ALLOWED_ROLE_IDS`
    - `DISCORD_AUDIT_CHANNEL_ID` (optional)
+   - `OPENAI_API_KEY` (optional, for JD AI mention replies)
+   - `JD_AI_ENABLED`
+   - `JD_AI_MODEL`
+   - `JD_AI_CHANNEL_IDS` (optional)
    - `BRIDGE_SHARED_SECRET`
    - `PORT`
 
@@ -67,6 +71,27 @@ The audit log includes:
 - the job id and payload
 - which server it targeted
 - whether Roblox completed, failed, or timed out
+
+### JD AI mention replies
+
+JD can also reply like an AI assistant when users ping the bot in Discord.
+
+Set these in `.env`:
+
+```env
+OPENAI_API_KEY=your_openai_key
+JD_AI_ENABLED=true
+JD_AI_MODEL=gpt-5.4-mini
+JD_AI_CHANNEL_IDS=123456789012345678,987654321098765432
+```
+
+Notes:
+
+- JD AI replies are mention-based, not slash-command based
+- if `JD_AI_CHANNEL_IDS` is blank, JD can reply in any server channel where it is pinged
+- if `JD_AI_CHANNEL_IDS` is set, JD only replies in those channels
+- JD slash commands and JD AI replies are separate systems
+- JD AI does not run bridge/admin commands from normal chat
 
 ## Roblox setup
 

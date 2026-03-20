@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import OpenAI from "openai";
 import {
 	Client,
 	GatewayIntentBits,
@@ -29,12 +30,37 @@ const serverPresence = new Map();
 const JOB_RESULT_TIMEOUT_MS = 20000;
 const JOB_RESULT_POLL_MS = 500;
 const auditChannelId = String(process.env.DISCORD_AUDIT_CHANNEL_ID || "").trim();
+const aiEnabled = /^(1|true|yes|on)$/i.test(String(process.env.JD_AI_ENABLED || ""));
+const aiModel = String(process.env.JD_AI_MODEL || "gpt-5.4-mini").trim() || "gpt-5.4-mini";
+const aiChannelIds = new Set(
+	(process.env.JD_AI_CHANNEL_IDS || "")
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean)
+);
 const allowedRoleIds = new Set(
 	(process.env.DISCORD_ALLOWED_ROLE_IDS || "")
 		.split(",")
 		.map((value) => value.trim())
 		.filter(Boolean)
 );
+const defaultAiSystemPrompt = [
+	"You are JD, the official Discord assistant for the Roblox game Judgement Divided.",
+	"Reply like a natural person in a Discord server: clear, calm, and conversational.",
+	"Keep answers fairly short unless the user asks for detail.",
+	"You can explain gameplay, systems, controls, testing, ranked, duels, characters, and patch notes.",
+	"Do not pretend to run admin commands or in-game actions from chat. If asked to do admin actions, tell them to use the JD slash commands or ask someone with JD Perms.",
+	"Do not invent unreleased features as confirmed facts.",
+	"Avoid sounding robotic, overly formal, or repetitive.",
+].join(" ");
+const aiSystemPrompt = String(process.env.JD_AI_SYSTEM_PROMPT || "").trim() || defaultAiSystemPrompt;
+const openai = aiEnabled && process.env.OPENAI_API_KEY
+	? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+	: null;
+
+if (aiEnabled && !process.env.OPENAI_API_KEY) {
+	console.warn("JD AI replies are enabled, but OPENAI_API_KEY is missing. Mention replies are disabled.");
+}
 
 function isAuthorizedInteraction(interaction) {
 	if (allowedRoleIds.size === 0) {
@@ -230,6 +256,94 @@ function getPresenceByRole(targetRole) {
 	return [...serverPresence.values()].filter((presence) => {
 		return targetRole === "any" || presence.role === targetRole;
 	});
+}
+
+function shouldHandleAiMessage(message) {
+	if (!aiEnabled || !openai) {
+		return false;
+	}
+
+	if (!message.guild || message.author.bot) {
+		return false;
+	}
+
+	if (aiChannelIds.size > 0 && !aiChannelIds.has(String(message.channelId))) {
+		return false;
+	}
+
+	return message.mentions.has(client.user);
+}
+
+function stripBotMention(content) {
+	if (!client.user) {
+		return content.trim();
+	}
+
+	const mentionPattern = new RegExp(`<@!?${client.user.id}>`, "g");
+	return content.replace(mentionPattern, "").trim();
+}
+
+function formatDiscordMessageForModel(message) {
+	const name =
+		message.member?.displayName ||
+		message.author?.globalName ||
+		message.author?.username ||
+		"Unknown";
+	const text = stripBotMention(message.content || "");
+	const attachmentNames = [...message.attachments.values()].map((attachment) => attachment.name).filter(Boolean);
+	const bodyParts = [];
+
+	if (text) {
+		bodyParts.push(text);
+	}
+
+	if (attachmentNames.length > 0) {
+		bodyParts.push(`Attachments: ${attachmentNames.join(", ")}`);
+	}
+
+	return `${name}: ${bodyParts.join(" | ")}`.trim();
+}
+
+async function buildAiInput(message) {
+	const fetched = await message.channel.messages.fetch({ limit: 8 });
+	const orderedMessages = [...fetched.values()]
+		.filter((entry) => entry.createdTimestamp <= message.createdTimestamp)
+		.filter((entry) => !entry.author.bot || entry.author.id === client.user?.id)
+		.sort((left, right) => left.createdTimestamp - right.createdTimestamp)
+		.slice(-6);
+
+	const input = [];
+	for (const entry of orderedMessages) {
+		const content = formatDiscordMessageForModel(entry);
+		if (!content) {
+			continue;
+		}
+
+		input.push({
+			role: entry.author.id === client.user?.id ? "assistant" : "user",
+			content,
+		});
+	}
+
+	return input;
+}
+
+async function generateAiReply(message) {
+	const input = await buildAiInput(message);
+	const response = await openai.responses.create({
+		model: aiModel,
+		instructions: aiSystemPrompt,
+		reasoning: {
+			effort: "none",
+		},
+		text: {
+			verbosity: "low",
+		},
+		max_output_tokens: 220,
+		input,
+	});
+
+	return String(response.output_text || "").trim();
 }
 
 function authRoblox(req, res, next) {
@@ -536,7 +650,11 @@ const commands = [
 ];
 
 const client = new Client({
-	intents: [GatewayIntentBits.Guilds],
+	intents: [
+		GatewayIntentBits.Guilds,
+		GatewayIntentBits.GuildMessages,
+		GatewayIntentBits.MessageContent,
+	],
 });
 
 client.once("ready", async () => {
@@ -756,6 +874,30 @@ client.on("interactionCreate", async (interaction) => {
 
 		await interaction.reply(players.slice(0, 40).join("\n"));
 		return;
+	}
+});
+
+client.on("messageCreate", async (message) => {
+	if (!shouldHandleAiMessage(message)) {
+		return;
+	}
+
+	const prompt = stripBotMention(message.content || "");
+	if (!prompt && message.attachments.size === 0) {
+		await message.reply("Ping me with a question and I’ll answer.");
+		return;
+	}
+
+	try {
+		if (typeof message.channel.sendTyping === "function") {
+			await message.channel.sendTyping();
+		}
+
+		const replyText = await generateAiReply(message);
+		await message.reply(replyText || "I couldn't come up with a useful answer for that.");
+	} catch (error) {
+		console.error("JD AI reply failed:", error);
+		await message.reply("I hit an error trying to answer that.");
 	}
 });
 
