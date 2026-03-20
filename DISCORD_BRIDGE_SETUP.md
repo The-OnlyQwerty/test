@@ -83,6 +83,7 @@ OPENAI_API_KEY=your_openai_key
 JD_AI_ENABLED=true
 JD_AI_MODEL=gpt-5-mini
 JD_AI_CHANNEL_IDS=123456789012345678,987654321098765432
+JD_AI_ALLOWED_ROLE_IDS=1482836698378535137
 ```
 
 Notes:
@@ -90,6 +91,8 @@ Notes:
 - JD AI replies are mention-based, not slash-command based
 - if `JD_AI_CHANNEL_IDS` is blank, JD can reply in any server channel where it is pinged
 - if `JD_AI_CHANNEL_IDS` is set, JD only replies in those channels
+- if `JD_AI_ALLOWED_ROLE_IDS` is set, JD only replies to members with one of those roles
+- if `JD_AI_ALLOWED_ROLE_IDS` is blank, JD AI falls back to `DISCORD_ALLOWED_ROLE_IDS`
 - JD slash commands and JD AI replies are separate systems
 - JD AI does not run bridge/admin commands from normal chat
 

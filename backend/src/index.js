@@ -44,6 +44,12 @@ const allowedRoleIds = new Set(
 		.map((value) => value.trim())
 		.filter(Boolean)
 );
+const aiAllowedRoleIds = new Set(
+	(process.env.JD_AI_ALLOWED_ROLE_IDS || process.env.DISCORD_ALLOWED_ROLE_IDS || "")
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean)
+);
 const defaultAiSystemPrompt = [
 	"You are JD, the official Discord assistant for the Roblox game Judgement Divided.",
 	"Reply like a natural person in a Discord server: clear, calm, and conversational.",
@@ -67,20 +73,7 @@ function isAuthorizedInteraction(interaction) {
 		return true;
 	}
 
-	const roles = interaction.member?.roles;
-	if (!roles) {
-		return false;
-	}
-
-	const memberRoleIds = Array.isArray(roles)
-		? roles
-		: Array.isArray(roles.cache)
-			? roles.cache.map((role) => role.id)
-			: roles.cache
-				? [...roles.cache.keys()]
-				: [];
-
-	return memberRoleIds.some((roleId) => allowedRoleIds.has(String(roleId)));
+	return getMemberRoleIds(interaction.member).some((roleId) => allowedRoleIds.has(String(roleId)));
 }
 
 function createJob(type, payload, targetRole, requestedBy) {
@@ -258,6 +251,21 @@ function getPresenceByRole(targetRole) {
 	});
 }
 
+function getMemberRoleIds(member) {
+	const roles = member?.roles;
+	if (!roles) {
+		return [];
+	}
+
+	return Array.isArray(roles)
+		? roles
+		: Array.isArray(roles.cache)
+			? roles.cache.map((role) => role.id)
+			: roles.cache
+				? [...roles.cache.keys()]
+				: [];
+}
+
 function shouldHandleAiMessage(message) {
 	if (!aiEnabled || !openai) {
 		return false;
@@ -269,6 +277,13 @@ function shouldHandleAiMessage(message) {
 
 	if (aiChannelIds.size > 0 && !aiChannelIds.has(String(message.channelId))) {
 		return false;
+	}
+
+	if (aiAllowedRoleIds.size > 0) {
+		const memberRoleIds = getMemberRoleIds(message.member);
+		if (!memberRoleIds.some((roleId) => aiAllowedRoleIds.has(String(roleId)))) {
+			return false;
+		}
 	}
 
 	return message.mentions.has(client.user);
@@ -701,6 +716,11 @@ client.once("ready", async () => {
 				? `JD AI restricted to channels: ${[...aiChannelIds].join(", ")}`
 				: "JD AI allowed in any channel where the bot is pinged."
 		);
+		console.log(
+			aiAllowedRoleIds.size > 0
+				? `JD AI restricted to roles: ${[...aiAllowedRoleIds].join(", ")}`
+				: "JD AI allowed for any role."
+		);
 	}
 });
 
@@ -921,6 +941,8 @@ client.on("messageCreate", async (message) => {
 					? "missing OpenAI client"
 					: aiChannelIds.size > 0 && !aiChannelIds.has(String(message.channelId))
 						? "channel not allowed"
+						: aiAllowedRoleIds.size > 0 && !getMemberRoleIds(message.member).some((roleId) => aiAllowedRoleIds.has(String(roleId)))
+							? "role not allowed"
 						: !message.guild
 							? "not a guild message"
 							: message.author.bot
