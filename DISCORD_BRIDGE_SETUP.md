@@ -81,7 +81,7 @@ Set these in `.env`:
 ```env
 OPENAI_API_KEY=your_openai_key
 JD_AI_ENABLED=true
-JD_AI_MODEL=gpt-5.4-mini
+JD_AI_MODEL=gpt-5-mini
 JD_AI_CHANNEL_IDS=123456789012345678,987654321098765432
 ```
 

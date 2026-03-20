@@ -31,7 +31,7 @@ const JOB_RESULT_TIMEOUT_MS = 20000;
 const JOB_RESULT_POLL_MS = 500;
 const auditChannelId = String(process.env.DISCORD_AUDIT_CHANNEL_ID || "").trim();
 const aiEnabled = /^(1|true|yes|on)$/i.test(String(process.env.JD_AI_ENABLED || ""));
-const aiModel = String(process.env.JD_AI_MODEL || "gpt-5.4-mini").trim() || "gpt-5.4-mini";
+const aiModel = String(process.env.JD_AI_MODEL || "gpt-5-mini").trim() || "gpt-5-mini";
 const aiChannelIds = new Set(
 	(process.env.JD_AI_CHANNEL_IDS || "")
 		.split(",")
@@ -668,6 +668,18 @@ client.once("ready", async () => {
 	});
 
 	console.log(`Discord bot ready as ${client.user.tag}`);
+	if (!aiEnabled) {
+		console.log("JD AI replies are disabled.");
+	} else if (!openai) {
+		console.log("JD AI replies are enabled but OPENAI_API_KEY is missing.");
+	} else {
+		console.log(`JD AI replies enabled with model ${aiModel}.`);
+		console.log(
+			aiChannelIds.size > 0
+				? `JD AI restricted to channels: ${[...aiChannelIds].join(", ")}`
+				: "JD AI allowed in any channel where the bot is pinged."
+		);
+	}
 });
 
 client.on("interactionCreate", async (interaction) => {
@@ -878,7 +890,22 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 client.on("messageCreate", async (message) => {
+	const wasMentioned = !!client.user && message.mentions.has(client.user);
 	if (!shouldHandleAiMessage(message)) {
+		if (wasMentioned) {
+			const reason = !aiEnabled
+				? "AI disabled"
+				: !openai
+					? "missing OpenAI client"
+					: aiChannelIds.size > 0 && !aiChannelIds.has(String(message.channelId))
+						? "channel not allowed"
+						: !message.guild
+							? "not a guild message"
+							: message.author.bot
+								? "author is a bot"
+								: "message blocked";
+			console.log(`JD AI mention ignored: ${reason} | channel=${message.channelId} | author=${message.author?.tag || "unknown"}`);
+		}
 		return;
 	}
 
