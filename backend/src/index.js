@@ -356,7 +356,7 @@ async function generateAiReply(message) {
 		model: aiModel,
 		instructions: aiSystemPrompt,
 		reasoning: {
-			effort: "none",
+			effort: "minimal",
 		},
 		text: {
 			verbosity: "low",
