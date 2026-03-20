@@ -283,6 +283,28 @@ function stripBotMention(content) {
 	return content.replace(mentionPattern, "").trim();
 }
 
+function describeAiError(error) {
+	if (!error || typeof error !== "object") {
+		return String(error || "unknown error");
+	}
+
+	const parts = [];
+	if ("status" in error && error.status) {
+		parts.push(`status=${error.status}`);
+	}
+	if ("code" in error && error.code) {
+		parts.push(`code=${error.code}`);
+	}
+	if ("type" in error && error.type) {
+		parts.push(`type=${error.type}`);
+	}
+	if ("message" in error && error.message) {
+		parts.push(`message=${error.message}`);
+	}
+
+	return parts.join(" | ") || "unknown error";
+}
+
 function formatDiscordMessageForModel(message) {
 	const name =
 		message.member?.displayName ||
@@ -923,7 +945,10 @@ client.on("messageCreate", async (message) => {
 		const replyText = await generateAiReply(message);
 		await message.reply(replyText || "I couldn't come up with a useful answer for that.");
 	} catch (error) {
-		console.error("JD AI reply failed:", error);
+		console.error(`JD AI reply failed: ${describeAiError(error)}`);
+		if (error?.response) {
+			console.error("JD AI raw response error:", error.response);
+		}
 		await message.reply("I hit an error trying to answer that.");
 	}
 });
