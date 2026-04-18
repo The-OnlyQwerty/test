@@ -1,7 +1,16 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local localPlayer = Players.LocalPlayer
+local isTouchDevice = UserInputService.TouchEnabled
+local dummyWatchers = {}
+local overheadRescanElapsed = 0
+
+local function hasBarGui(character)
+	local head = character and character:FindFirstChild("Head")
+	return head and head:FindFirstChild("OverheadHealth") ~= nil
+end
 
 local function createBarGui(character)
 	local head = character:FindFirstChild("Head") or character:WaitForChild("Head", 5)
@@ -17,8 +26,8 @@ local function createBarGui(character)
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "OverheadHealth"
-	billboard.Size = UDim2.fromOffset(130, 34)
-	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.Size = isTouchDevice and UDim2.fromOffset(118, 30) or UDim2.fromOffset(130, 34)
+	billboard.StudsOffset = isTouchDevice and Vector3.new(0, 2.75, 0) or Vector3.new(0, 3.5, 0)
 	billboard.AlwaysOnTop = true
 	billboard.MaxDistance = 120
 	billboard.Parent = head
@@ -32,12 +41,12 @@ local function createBarGui(character)
 	nameLabel.Text = character:GetAttribute("DisplayName") or (Players:GetPlayerFromCharacter(character) and Players:GetPlayerFromCharacter(character).DisplayName) or character.Name
 	nameLabel.TextColor3 = Color3.fromRGB(245, 245, 245)
 	nameLabel.TextStrokeTransparency = 0.4
-	nameLabel.TextSize = 12
+	nameLabel.TextSize = isTouchDevice and 10 or 12
 	nameLabel.Parent = billboard
 
 	local back = Instance.new("Frame")
-	back.Position = UDim2.new(0, 20, 0, 18)
-	back.Size = UDim2.new(1, -40, 0, 10)
+	back.Position = isTouchDevice and UDim2.new(0, 18, 0, 16) or UDim2.new(0, 20, 0, 18)
+	back.Size = isTouchDevice and UDim2.new(1, -36, 0, 9) or UDim2.new(1, -40, 0, 10)
 	back.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 	back.BorderSizePixel = 0
 	back.Parent = billboard
@@ -75,9 +84,35 @@ local function createBarGui(character)
 end
 
 local function hookDummy(dummy)
-	if dummy:IsA("Model") and dummy:GetAttribute("IsTargetDummy") then
-		createBarGui(dummy)
+	if not dummy:IsA("Model") or dummyWatchers[dummy] then
+		return
 	end
+
+	local function tryCreate()
+		if dummy.Parent and dummy:GetAttribute("IsTargetDummy") and not hasBarGui(dummy) then
+			createBarGui(dummy)
+		end
+	end
+
+	dummyWatchers[dummy] = {
+		AttributeConnection = dummy:GetAttributeChangedSignal("IsTargetDummy"):Connect(tryCreate),
+		AncestryConnection = dummy.AncestryChanged:Connect(function(_, parent)
+			if parent == nil then
+				local watcher = dummyWatchers[dummy]
+				if watcher then
+					if watcher.AttributeConnection then
+						watcher.AttributeConnection:Disconnect()
+					end
+					if watcher.AncestryConnection then
+						watcher.AncestryConnection:Disconnect()
+					end
+					dummyWatchers[dummy] = nil
+				end
+			end
+		end),
+	}
+
+	tryCreate()
 end
 
 local function hookPlayer(player)
@@ -104,6 +139,19 @@ local function hookNpcFolder(folder)
 	folder.ChildAdded:Connect(hookDummy)
 end
 
+local function refreshDummyBars()
+	local folder = workspace:FindFirstChild("CombatNPCs")
+	if not folder then
+		return
+	end
+
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("Model") and child:GetAttribute("IsTargetDummy") and not hasBarGui(child) then
+			createBarGui(child)
+		end
+	end
+end
+
 local npcFolder = workspace:FindFirstChild("CombatNPCs")
 if npcFolder then
 	hookNpcFolder(npcFolder)
@@ -114,3 +162,13 @@ else
 		end
 	end)
 end
+
+RunService.Heartbeat:Connect(function(deltaTime)
+	overheadRescanElapsed += deltaTime
+	if overheadRescanElapsed < 1 then
+		return
+	end
+
+	overheadRescanElapsed = 0
+	refreshDummyBars()
+end)

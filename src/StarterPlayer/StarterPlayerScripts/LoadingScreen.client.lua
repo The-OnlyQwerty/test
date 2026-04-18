@@ -85,6 +85,19 @@ local barFill = create("Frame", {
 })
 create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = barFill})
 
+local percentLabel = create("TextLabel", {
+	BackgroundTransparency = 1,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.new(1, -10, 1, 0),
+	Font = Enum.Font.Arcade,
+	Text = "0%",
+	TextColor3 = Color3.fromRGB(26, 16, 10),
+	TextSize = 10,
+	ZIndex = 3,
+	Parent = barBack,
+})
+
 local hint = create("TextLabel", {
 	BackgroundTransparency = 1,
 	AnchorPoint = Vector2.new(0.5, 0.5),
@@ -98,50 +111,252 @@ local hint = create("TextLabel", {
 	Parent = root,
 })
 
-local loadingSteps = {
-	"Loading menu visuals...",
-	"Loading character data...",
-	"Loading combat systems...",
-	"Loading animations...",
-	"Finalizing interface...",
+local detail = create("TextLabel", {
+	BackgroundTransparency = 1,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.79),
+	Size = UDim2.fromOffset(620, 24),
+	Font = Enum.Font.Arcade,
+	Text = "Building asset list...",
+	TextColor3 = Color3.fromRGB(224, 204, 188),
+	TextTransparency = 0.12,
+	TextSize = 10,
+	Parent = root,
+})
+
+local PRELOADABLE_CLASS_NAMES = {
+	Animation = true,
+	Sound = true,
+	Decal = true,
+	Texture = true,
+	ImageLabel = true,
+	ImageButton = true,
+	MeshPart = true,
+	SpecialMesh = true,
+	SurfaceAppearance = true,
+	ShirtGraphic = true,
+	Shirt = true,
+	Pants = true,
 }
 
-local preloadInstances = {
-	ReplicatedStorage,
-	ReplicatedStorage:WaitForChild("Shared"),
-	ReplicatedStorage:WaitForChild("Remotes"),
-	StarterPlayer:WaitForChild("StarterPlayerScripts"),
+local generatedInstances = {}
+
+local function addUniqueTarget(list, seen, instance)
+	if instance and not seen[instance] then
+		seen[instance] = true
+		table.insert(list, instance)
+	end
+end
+
+local function collectPreloadTargets(rootInstance, list, seen)
+	if not rootInstance then
+		return
+	end
+
+	for _, descendant in ipairs(rootInstance:GetDescendants()) do
+		if PRELOADABLE_CLASS_NAMES[descendant.ClassName] then
+			addUniqueTarget(list, seen, descendant)
+		end
+	end
+end
+
+local function clonePath(parts)
+	local copy = {}
+	for index, value in ipairs(parts) do
+		copy[index] = value
+	end
+	return copy
+end
+
+local function collectAnimationTargets(value, pathParts, list, seenIds)
+	if type(value) == "number" then
+		if value == 0 then
+			return
+		end
+
+		local id = tostring(value)
+		if seenIds[id] then
+			return
+		end
+
+		seenIds[id] = true
+		local animation = Instance.new("Animation")
+		animation.Name = table.concat(pathParts, " ")
+		animation.AnimationId = "rbxassetid://" .. id
+		table.insert(generatedInstances, animation)
+		table.insert(list, animation)
+		return
+	end
+
+	if type(value) ~= "table" then
+		return
+	end
+
+	for key, child in pairs(value) do
+		local nextPath = clonePath(pathParts)
+		table.insert(nextPath, tostring(key))
+		collectAnimationTargets(child, nextPath, list, seenIds)
+	end
+end
+
+local mapTargets = {}
+local replicatedTargets = {}
+local animationTargets = {}
+local audioTargets = {}
+local mapSeen = {}
+local replicatedSeen = {}
+local seenAnimationIds = {}
+
+collectPreloadTargets(workspace, mapTargets, mapSeen)
+collectPreloadTargets(ReplicatedStorage, replicatedTargets, replicatedSeen)
+
+for kitId, kit in pairs(CharacterKits) do
+	if kit.AnimationIds then
+		collectAnimationTargets(kit.AnimationIds, {tostring(kit.DisplayName or kitId), "Animations"}, animationTargets, seenAnimationIds)
+	end
+end
+
+collectAnimationTargets({
+	AirKnockback = Constants.KNOCKBACK_AIR_ANIMATION_ID,
+	KnockbackSlide = Constants.KNOCKBACK_SLIDE_ANIMATION_ID,
+}, {"Shared", "Knockback Animations"}, animationTargets, seenAnimationIds)
+
+local preloadAudioIds = {
+	{"Menu Music", Constants.MENU_MUSIC_ID},
+	{"Battle Music", Constants.BATTLE_MUSIC_ID},
+	{"Tense Battle Music", Constants.TENSE_BATTLE_MUSIC_ID},
+	{"Training Music", Constants.TRAINING_MUSIC_ID},
 }
 
-for _, kit in pairs(CharacterKits) do
-	local animationIds = kit.AnimationIds
-	if animationIds then
-		for _, animationId in pairs(animationIds) do
-			if animationId and animationId ~= 0 then
-				local animation = Instance.new("Animation")
-				animation.AnimationId = "rbxassetid://" .. tostring(animationId)
-				table.insert(preloadInstances, animation)
+local seenPreloadAudioIds = {}
+for _, audioInfo in ipairs(preloadAudioIds) do
+	local audioId = tonumber(audioInfo[2]) or 0
+	if audioId ~= 0 then
+		seenPreloadAudioIds[audioId] = true
+	end
+end
+
+for kitId, soundId in pairs(Constants.CHARACTER_THEME_IDS or {}) do
+	local numericSoundId = tonumber(soundId) or 0
+	if numericSoundId ~= 0 and not seenPreloadAudioIds[numericSoundId] then
+		table.insert(preloadAudioIds, {tostring(kitId) .. " Theme", numericSoundId})
+		seenPreloadAudioIds[numericSoundId] = true
+	end
+end
+
+for kitId, skins in pairs(Constants.SKIN_THEME_IDS or {}) do
+	if type(skins) == "table" then
+		for skinId, phases in pairs(skins) do
+			if type(phases) == "table" then
+				for phaseName, soundId in pairs(phases) do
+					local numericSoundId = tonumber(soundId) or 0
+					if numericSoundId ~= 0 and not seenPreloadAudioIds[numericSoundId] then
+						table.insert(preloadAudioIds, {string.format("%s %s %s", tostring(kitId), tostring(skinId), tostring(phaseName)), numericSoundId})
+						seenPreloadAudioIds[numericSoundId] = true
+					end
+				end
 			end
 		end
 	end
 end
 
-task.spawn(function()
-	local stepCount = #loadingSteps
-	for index, step in ipairs(loadingSteps) do
-		status.Text = step
-		barFill:TweenSize(UDim2.new((index - 0.25) / stepCount, 0, 1, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.18, true)
-		task.wait(0.08)
-		pcall(function()
-			ContentProvider:PreloadAsync(preloadInstances)
-		end)
+for _, audioInfo in ipairs(preloadAudioIds) do
+	local audioName = audioInfo[1]
+	local audioId = audioInfo[2]
+	if audioId and audioId ~= 0 then
+		local sound = Instance.new("Sound")
+		sound.Name = audioName
+		sound.SoundId = "rbxassetid://" .. tostring(audioId)
+		table.insert(generatedInstances, sound)
+		table.insert(audioTargets, sound)
+	end
+end
+
+local loadingStages = {
+	{
+		Name = "Loading map assets...",
+		Targets = mapTargets,
+	},
+	{
+		Name = "Loading replicated assets...",
+		Targets = replicatedTargets,
+	},
+	{
+		Name = "Loading character animations...",
+		Targets = animationTargets,
+	},
+	{
+		Name = "Loading audio...",
+		Targets = audioTargets,
+	},
+	{
+		Name = "Finalizing interface...",
+		Targets = {},
+		Units = 1,
+		Pause = 0.18,
+	},
+}
+
+local totalUnits = 0
+for _, stage in ipairs(loadingStages) do
+	totalUnits += math.max(stage.Units or 0, #stage.Targets, 1)
+end
+
+local function getTargetLabel(target)
+	if not target then
+		return "Preparing"
 	end
 
-	barFill:TweenSize(UDim2.new(1, 0, 1, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
-	status.Text = "Complete"
+	if target.Name and target.Name ~= "" then
+		return target.Name
+	end
+
+	return target.ClassName
+end
+
+local function setProgress(currentUnits, stageName, detailText)
+	local progress = totalUnits > 0 and math.clamp(currentUnits / totalUnits, 0, 1) or 1
+	status.Text = stageName
+	hint.Text = detailText
+	detail.Text = string.format("Loaded %d of %d items", math.floor(currentUnits + 0.5), totalUnits)
+	percentLabel.Text = string.format("%d%%", math.floor((progress * 100) + 0.5))
+	barFill:TweenSize(UDim2.new(progress, 0, 1, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.12, true)
+end
+
+task.spawn(function()
+	local completedUnits = 0
+	setProgress(0, "Preparing loading pipeline...", "Scanning map, UI, audio, and animation assets")
+	task.wait(0.06)
+
+	for _, stage in ipairs(loadingStages) do
+		local targets = stage.Targets
+		local stageUnits = math.max(stage.Units or 0, #targets, 1)
+		if #targets == 0 then
+			setProgress(completedUnits, stage.Name, "No assets in this category")
+			task.wait(stage.Pause or 0.08)
+			completedUnits += stageUnits
+			setProgress(completedUnits, stage.Name, "Ready")
+		else
+			for index, target in ipairs(targets) do
+				setProgress(completedUnits + ((index - 1) / stageUnits), stage.Name, string.format("%s  (%d/%d)", getTargetLabel(target), index, #targets))
+				pcall(function()
+					ContentProvider:PreloadAsync({target})
+				end)
+				completedUnits += 1
+				setProgress(completedUnits, stage.Name, string.format("%s loaded", getTargetLabel(target)))
+				task.wait(0.01)
+			end
+		end
+	end
+
+	setProgress(totalUnits, "Complete", "Everything is ready")
 	task.wait(0.2)
 
 	playerGui:SetAttribute(Constants.LOADING_ATTRIBUTE, true)
+
+	for _, instance in ipairs(generatedInstances) do
+		instance:Destroy()
+	end
 
 	TweenService:Create(root, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		BackgroundTransparency = 1,
@@ -152,7 +367,7 @@ task.spawn(function()
 	TweenService:Create(barFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		BackgroundTransparency = 1,
 	}):Play()
-	for _, label in ipairs({title, status, hint}) do
+	for _, label in ipairs({title, status, hint, detail, percentLabel}) do
 		TweenService:Create(label, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			TextTransparency = 1,
 		}):Play()

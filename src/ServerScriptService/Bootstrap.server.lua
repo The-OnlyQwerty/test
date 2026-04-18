@@ -1,4 +1,6 @@
 local Lighting = game:GetService("Lighting")
+local InsertService = game:GetService("InsertService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local sharedFolder = ReplicatedStorage:FindFirstChild("Shared") or Instance.new("Folder")
@@ -17,12 +19,84 @@ local combatState = remotesFolder:FindFirstChild("CombatState") or Instance.new(
 combatState.Name = "CombatState"
 combatState.Parent = remotesFolder
 
+local hudAssetResolver = remotesFolder:FindFirstChild("HudAssetResolver") or Instance.new("RemoteFunction")
+hudAssetResolver.Name = "HudAssetResolver"
+hudAssetResolver.Parent = remotesFolder
+
+local Constants = require(sharedFolder:WaitForChild("Constants"))
 local CombatService = require(script.Parent:WaitForChild("CombatService"))
 
 local service = CombatService.new({
 	CombatRequest = combatRequest,
 	CombatState = combatState,
 })
+
+local resolvedHudAssetCache = {}
+
+local function normalizeContentId(contentId)
+	if typeof(contentId) ~= "string" or contentId == "" then
+		return nil
+	end
+
+	local numericId = string.match(contentId, "%d+")
+	if numericId then
+		return "rbxassetid://" .. numericId
+	end
+
+	return contentId
+end
+
+local function extractImageContent(instance)
+	for _, descendant in ipairs(instance:GetDescendants()) do
+		if descendant:IsA("Decal") or descendant:IsA("Texture") then
+			local normalized = normalizeContentId(descendant.Texture)
+			if normalized then
+				return normalized
+			end
+		elseif descendant:IsA("ImageLabel") or descendant:IsA("ImageButton") then
+			local normalized = normalizeContentId(descendant.Image)
+			if normalized then
+				return normalized
+			end
+		end
+	end
+
+	return nil
+end
+
+local function resolveHudAssetImage(assetId)
+	if resolvedHudAssetCache[assetId] ~= nil then
+		return resolvedHudAssetCache[assetId]
+	end
+
+	local resolvedImage = nil
+	local ok, container = pcall(function()
+		return InsertService:LoadAsset(assetId)
+	end)
+	if ok and container then
+		resolvedImage = extractImageContent(container)
+		container:Destroy()
+	end
+
+	resolvedHudAssetCache[assetId] = resolvedImage
+	return resolvedImage
+end
+
+hudAssetResolver.OnServerInvoke = function(_, action, payload)
+	if action ~= "ResolveUiAssetTextures" or typeof(payload) ~= "table" then
+		return {}
+	end
+
+	local resolved = {}
+	for key, assetId in pairs(payload) do
+		local numericId = typeof(assetId) == "number" and assetId or tonumber(string.match(tostring(assetId), "%d+"))
+		if numericId then
+			resolved[key] = resolveHudAssetImage(numericId)
+		end
+	end
+
+	return resolved
+end
 
 local DUMMY_RESPAWN_TIME = 3
 local DUEL_ARENA_CENTER = Vector3.new(0, 320, 6000)
@@ -224,6 +298,43 @@ local function ensureMainMap()
 	)
 	path.Material = Enum.Material.Ground
 
+	local leaderboardBase = ensureArenaPart(
+		folder,
+		"RankedLeaderboardBase",
+		Vector3.new(34, 2, 10),
+		CFrame.new(MAIN_MAP_CENTER + Vector3.new(120, 6, 84)),
+		Color3.fromRGB(126, 112, 86)
+	)
+	leaderboardBase.Material = Enum.Material.WoodPlanks
+
+	local leaderboardBoard = ensureArenaPart(
+		folder,
+		"RankedLeaderboard",
+		Vector3.new(30, 18, 1),
+		CFrame.new(MAIN_MAP_CENTER + Vector3.new(120, 16, 79)),
+		Color3.fromRGB(42, 28, 24)
+	)
+	leaderboardBoard.Material = Enum.Material.Slate
+	leaderboardBoard.Name = "RankedLeaderboard"
+
+	local leftPost = ensureArenaPart(
+		folder,
+		"RankedLeaderboardPostLeft",
+		Vector3.new(2, 12, 2),
+		CFrame.new(MAIN_MAP_CENTER + Vector3.new(108, 8, 83)),
+		Color3.fromRGB(96, 74, 52)
+	)
+	leftPost.Material = Enum.Material.Wood
+
+	local rightPost = ensureArenaPart(
+		folder,
+		"RankedLeaderboardPostRight",
+		Vector3.new(2, 12, 2),
+		CFrame.new(MAIN_MAP_CENTER + Vector3.new(132, 8, 83)),
+		Color3.fromRGB(96, 74, 52)
+	)
+	rightPost.Material = Enum.Material.Wood
+
 	return folder
 end
 
@@ -311,60 +422,78 @@ local function ensureDuelSpawns()
 	ensureSpawn("SpawnB", DUEL_ARENA_CENTER + Vector3.new(108, 4, 0), DUEL_ARENA_CENTER + Vector3.new(-108, 4, 0))
 end
 
-local function makePart(name, size, position, color, parent, shape)
-	local part = Instance.new("Part")
-	part.Name = name
-	part.Size = size
-	part.Position = position
-	part.Color = color
-	part.Anchored = false
-	part.TopSurface = Enum.SurfaceType.Smooth
-	part.BottomSurface = Enum.SurfaceType.Smooth
-	part.Shape = shape or Enum.PartType.Block
-	part.Parent = parent
-	return part
+local function styleDummyRig(dummy)
+	local bodyColors = dummy:FindFirstChildOfClass("BodyColors") or Instance.new("BodyColors")
+	bodyColors.HeadColor3 = Color3.fromRGB(200, 200, 200)
+	bodyColors.TorsoColor3 = Color3.fromRGB(145, 145, 145)
+	bodyColors.LeftArmColor3 = Color3.fromRGB(125, 125, 125)
+	bodyColors.RightArmColor3 = Color3.fromRGB(125, 125, 125)
+	bodyColors.LeftLegColor3 = Color3.fromRGB(100, 100, 100)
+	bodyColors.RightLegColor3 = Color3.fromRGB(100, 100, 100)
+	bodyColors.Parent = dummy
+
+	for _, descendant in ipairs(dummy:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			descendant.Material = Enum.Material.SmoothPlastic
+			descendant.TopSurface = Enum.SurfaceType.Smooth
+			descendant.BottomSurface = Enum.SurfaceType.Smooth
+			if descendant.Name == "HumanoidRootPart" then
+				descendant.Transparency = 1
+				descendant.CanCollide = false
+			end
+		end
+	end
 end
 
 local function createDummy(folder, config)
 	local existing = folder:FindFirstChild(config.Name)
 	if existing then
-		return existing
+		if existing:GetAttribute("DummyRigVersion") == 2 then
+			return existing
+		end
+		existing:Destroy()
 	end
 
-	local dummy = Instance.new("Model")
+	local description = Instance.new("HumanoidDescription")
+	local dummy = Players:CreateHumanoidModelFromDescription(description, Enum.HumanoidRigType.R6)
 	dummy.Name = config.Name
 	dummy.Parent = folder
 
-	local root = makePart("HumanoidRootPart", Vector3.new(2, 2, 1), config.Position, Color3.fromRGB(110, 110, 110), dummy)
-	local torso = makePart("Torso", Vector3.new(2, 2, 1), root.Position + Vector3.new(0, 1.5, 0), Color3.fromRGB(145, 145, 145), dummy)
-	local head = makePart("Head", Vector3.new(2, 1, 1), torso.Position + Vector3.new(0, 1.5, 0), Color3.fromRGB(200, 200, 200), dummy, Enum.PartType.Ball)
-	local leftLeg = makePart("Left Leg", Vector3.new(1, 2, 1), root.Position + Vector3.new(-0.5, -1.5, 0), Color3.fromRGB(100, 100, 100), dummy)
-	local rightLeg = makePart("Right Leg", Vector3.new(1, 2, 1), root.Position + Vector3.new(0.5, -1.5, 0), Color3.fromRGB(100, 100, 100), dummy)
-	local leftArm = makePart("Left Arm", Vector3.new(1, 2, 1), torso.Position + Vector3.new(-1.5, 0, 0), Color3.fromRGB(125, 125, 125), dummy)
-	local rightArm = makePart("Right Arm", Vector3.new(1, 2, 1), torso.Position + Vector3.new(1.5, 0, 0), Color3.fromRGB(125, 125, 125), dummy)
-
-	local humanoid = Instance.new("Humanoid")
+	local humanoid = dummy:FindFirstChildOfClass("Humanoid") or Instance.new("Humanoid")
 	humanoid.MaxHealth = config.Health
 	humanoid.Health = config.Health
 	humanoid.WalkSpeed = 0
+	humanoid.AutoRotate = false
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	humanoid.Parent = dummy
-	Instance.new("Animator", humanoid)
-
-	for _, part in ipairs({torso, head, leftLeg, rightLeg, leftArm, rightArm}) do
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = root
-		weld.Part1 = part
-		weld.Parent = root
+	local animate = dummy:FindFirstChild("Animate")
+	if animate then
+		animate:Destroy()
 	end
+	if not humanoid:FindFirstChildOfClass("Animator") then
+		Instance.new("Animator", humanoid)
+	end
+
+	local root = dummy:FindFirstChild("HumanoidRootPart")
+	if root then
+		dummy:PivotTo(CFrame.new(config.Position))
+	end
+	styleDummyRig(dummy)
 
 	dummy.PrimaryPart = root
 	dummy:SetAttribute("IsTargetDummy", true)
 	dummy:SetAttribute("DisplayName", config.DisplayName)
 	dummy:SetAttribute("Blocking", config.Blocking or false)
 	dummy:SetAttribute("DummyBehavior", config.Behavior or "Idle")
+	dummy:SetAttribute("DummyDamage", config.Damage or 0)
+	dummy:SetAttribute("DummyKnockback", config.Knockback or 0)
+	dummy:SetAttribute("DummyStun", config.Stun or 0)
+	dummy:SetAttribute("DummyReactiveKnockback", config.ReactiveKnockback or 0)
+	dummy:SetAttribute("DummyReactiveLaunch", config.ReactiveLaunch == true)
+	dummy:SetAttribute("DummyReactiveStun", config.ReactiveStun or 0)
 	dummy:SetAttribute("Stunned", false)
 	dummy:SetAttribute("Respawning", false)
+	dummy:SetAttribute("DummyRigVersion", 3)
 
 	return dummy
 end
@@ -390,6 +519,26 @@ local DUMMY_CONFIGS = {
 		Health = 400,
 		Position = Vector3.new(-8, 4, -18),
 		Behavior = "Attacking",
+		Damage = 12,
+		Knockback = 18,
+		Stun = Constants.M1_STUN_TIME,
+	},
+	{
+		Name = "PerfectBlockDummy",
+		DisplayName = "Perfect Block Dummy",
+		Health = 400,
+		Position = Vector3.new(16, 4, -18),
+		Blocking = true,
+		Behavior = "PerfectBlocking",
+	},
+	{
+		Name = "KnockbackDummy",
+		DisplayName = "Knockback Dummy",
+		Health = 400,
+		Position = Vector3.new(24, 4, -18),
+		Behavior = "KnockbackOnHit",
+		ReactiveKnockback = 46,
+		ReactiveLaunch = true,
 	},
 }
 
@@ -466,7 +615,18 @@ local function runAttackDummy(folder)
 				local targetHumanoid = model and model:FindFirstChildOfClass("Humanoid")
 				if model and model ~= dummy and targetHumanoid and targetHumanoid.Health > 0 and not seen[model] then
 					seen[model] = true
-					targetHumanoid:TakeDamage(12)
+					local targetPlayer = Players:GetPlayerFromCharacter(model)
+					if targetPlayer and service.GetKit and Constants.SANS_DODGE_DEBUG then
+						local targetKit = service:GetKit(targetPlayer)
+						if targetKit and targetKit.DisplayName == "Sans" then
+							service:SendDodgeDebug(targetPlayer, "DUMMY HIT DETECTED")
+						end
+					end
+					service:DamageTarget(dummy, model, dummy:GetAttribute("DummyDamage") or 12, dummy:GetAttribute("DummyKnockback") or 0, dummy:GetAttribute("DummyStun") or 0, {
+						AllowTrainingDamage = true,
+						NoKR = true,
+						HitType = "M1Melee",
+					})
 				end
 			end
 		end

@@ -14,6 +14,7 @@ local mouse = player:GetMouse()
 local currentTarget
 local lastLockedTarget
 local camera = Workspace.CurrentCamera
+local characterHumanoidConnection
 
 local function updateFov(targetFov)
 	if not camera then
@@ -29,13 +30,7 @@ local function updateFov(targetFov)
 end
 
 local function notify(text)
-	pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = "Lock On",
-			Text = text,
-			Duration = 1.25,
-		})
-	end)
+	return
 end
 
 local function getRoot(model)
@@ -65,20 +60,51 @@ local function getTargetFromMouse()
 	return model
 end
 
-local function setTarget(model)
+local function setTarget(model, options)
+	options = options or {}
 	currentTarget = model
 	if model then
 		lastLockedTarget = model
 		updateFov(Constants.LOCK_ON_FOV)
-		notify("Locked")
+		if not options.Silent then
+			notify("Locked")
+		end
 	else
 		updateFov(Constants.DEFAULT_FOV)
-		notify("Lock cleared")
+		if not options.Silent then
+			notify("Lock cleared")
+		end
 	end
 end
 
 local function isValidTarget(model)
 	return model and model.Parent and isAliveTarget(model)
+end
+
+local function getCharacterRoot()
+	return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getNearestTarget()
+	local root = getCharacterRoot()
+	if not root then
+		return nil
+	end
+
+	local bestTarget
+	local bestDistance = math.huge
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("Model") and descendant ~= player.Character and isAliveTarget(descendant) then
+			local targetRoot = getRoot(descendant)
+			local distance = (targetRoot.Position - root.Position).Magnitude
+			if distance < bestDistance and distance <= 80 then
+				bestTarget = descendant
+				bestDistance = distance
+			end
+		end
+	end
+
+	return bestTarget
 end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -100,9 +126,27 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 end)
 
-player.CharacterAdded:Connect(function()
-	currentTarget = nil
-	updateFov(Constants.DEFAULT_FOV)
+player.CharacterAdded:Connect(function(character)
+	setTarget(nil, {Silent = true})
+	if characterHumanoidConnection then
+		characterHumanoidConnection:Disconnect()
+		characterHumanoidConnection = nil
+	end
+
+	local humanoid = getHumanoid(character)
+	if humanoid then
+		characterHumanoidConnection = humanoid.Died:Connect(function()
+			setTarget(nil, {Silent = true})
+		end)
+	end
+end)
+
+player.CharacterRemoving:Connect(function()
+	setTarget(nil, {Silent = true})
+	if characterHumanoidConnection then
+		characterHumanoidConnection:Disconnect()
+		characterHumanoidConnection = nil
+	end
 end)
 
 _G.JudgementDividedLockOn = {
@@ -119,5 +163,24 @@ _G.JudgementDividedLockOn = {
 	end,
 	GetLockedModel = function()
 		return isValidTarget(currentTarget) and currentTarget or nil
+	end,
+	LockFromCursor = function()
+		setTarget(getTargetFromMouse())
+	end,
+	LockNearest = function()
+		setTarget(getNearestTarget())
+	end,
+	RelockLast = function()
+		if isValidTarget(lastLockedTarget) then
+			currentTarget = lastLockedTarget
+			updateFov(Constants.LOCK_ON_FOV)
+			notify("Relocked")
+		else
+			updateFov(Constants.DEFAULT_FOV)
+			notify("No previous target")
+		end
+	end,
+	ClearLock = function(silent)
+		setTarget(nil, {Silent = silent == true})
 	end,
 }

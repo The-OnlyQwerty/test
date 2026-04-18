@@ -11,6 +11,14 @@ local function getRoot(model)
 	return model and model:FindFirstChild("HumanoidRootPart")
 end
 
+local function getHumanoid(model)
+	return model and model:FindFirstChildOfClass("Humanoid")
+end
+
+local function isRotationLocked(character)
+	return character and character:GetAttribute("KnockbackLocked") == true
+end
+
 local function applyUnlockedCamera()
 	local camera = Workspace.CurrentCamera
 	if not camera then
@@ -24,9 +32,10 @@ local function applyUnlockedCamera()
 	player.CameraMaxZoomDistance = 128
 
 	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local humanoid = getHumanoid(character)
 	if humanoid then
-		humanoid.AutoRotate = true
+		camera.CameraSubject = humanoid
+		humanoid.AutoRotate = not isRotationLocked(character)
 		humanoid.CameraOffset = Vector3.zero
 	end
 end
@@ -35,10 +44,15 @@ local function applyLockedCamera(targetModel)
 	local camera = Workspace.CurrentCamera
 	local character = player.Character
 	local playerRoot = getRoot(character)
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local humanoid = getHumanoid(character)
+	local targetHumanoid = getHumanoid(targetModel)
 	local targetRoot = getRoot(targetModel)
-	if not camera or not playerRoot or not targetRoot or not humanoid then
-		return
+	if not camera or not playerRoot or not targetRoot or not humanoid or not targetHumanoid then
+		return false
+	end
+
+	if humanoid.Health <= 0 or targetHumanoid.Health <= 0 then
+		return false
 	end
 
 	local targetPoint = targetRoot.Position + Vector3.new(0, 2.5, 0)
@@ -60,6 +74,7 @@ local function applyLockedCamera(targetModel)
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.FieldOfView = Constants.LOCK_ON_FOV
 	camera.CFrame = CFrame.lookAt(cameraPosition, targetPoint)
+	return true
 end
 
 player.CharacterAdded:Connect(function()
@@ -73,9 +88,13 @@ end
 RunService:BindToRenderStep("JudgementDividedCamera", Enum.RenderPriority.Camera.Value + 1, function()
 	local lockOn = _G.JudgementDividedLockOn
 	local targetModel = lockOn and lockOn.GetLockedModel and lockOn.GetLockedModel() or nil
-	if targetModel then
-		applyLockedCamera(targetModel)
-	else
-		applyUnlockedCamera()
+	if targetModel and applyLockedCamera(targetModel) then
+		return
 	end
+
+	if targetModel and lockOn and lockOn.ClearLock then
+		lockOn.ClearLock(true)
+	end
+
+	applyUnlockedCamera()
 end)
