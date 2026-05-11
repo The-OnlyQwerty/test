@@ -6,6 +6,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Constants = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Constants"))
 
 local player = Players.LocalPlayer
+local CAMERA_SHAKE_LIFETIME = 0.18
+local CAMERA_SHAKE_POSITION_SCALE = 0.08
+local CAMERA_SHAKE_ROTATION_SCALE = 0.9
+local cameraShakeState = {
+	Magnitude = 0,
+	ExpiresAt = 0,
+	Seed = 0,
+}
+
+local cameraEffects = rawget(_G, "JudgementDividedCameraEffects") or {}
+_G.JudgementDividedCameraEffects = cameraEffects
 
 local function getRoot(model)
 	return model and model:FindFirstChild("HumanoidRootPart")
@@ -17,6 +28,49 @@ end
 
 local function isRotationLocked(character)
 	return character and character:GetAttribute("KnockbackLocked") == true
+end
+
+function cameraEffects.AddImpulse(config)
+	local magnitude = config
+	if type(config) == "table" then
+		magnitude = config.magnitude
+	end
+
+	magnitude = tonumber(magnitude) or 0
+	if magnitude <= 0 then
+		return
+	end
+
+	cameraShakeState.Magnitude = math.clamp(math.max(cameraShakeState.Magnitude, magnitude), 0, 2.5)
+	cameraShakeState.ExpiresAt = os.clock() + CAMERA_SHAKE_LIFETIME
+	cameraShakeState.Seed += 11.37
+end
+
+local function getShakeNoise(seedOffset, timePosition)
+	return math.noise(cameraShakeState.Seed + seedOffset, timePosition, 0)
+end
+
+local function applyCameraShake(camera)
+	local remaining = cameraShakeState.ExpiresAt - os.clock()
+	if not camera or remaining <= 0 or cameraShakeState.Magnitude <= 0.001 then
+		cameraShakeState.Magnitude = 0
+		return
+	end
+
+	local fadeAlpha = math.clamp(remaining / CAMERA_SHAKE_LIFETIME, 0, 1)
+	local strength = cameraShakeState.Magnitude * fadeAlpha
+	local timePosition = os.clock() * 24
+	local x = getShakeNoise(0, timePosition) * strength
+	local y = getShakeNoise(13, timePosition) * strength
+	local z = getShakeNoise(29, timePosition) * strength
+
+	camera.CFrame = camera.CFrame
+		* CFrame.new(x * CAMERA_SHAKE_POSITION_SCALE, y * CAMERA_SHAKE_POSITION_SCALE, math.abs(z) * -0.04 * strength)
+		* CFrame.Angles(
+			math.rad(y * CAMERA_SHAKE_ROTATION_SCALE),
+			math.rad(x * CAMERA_SHAKE_ROTATION_SCALE),
+			math.rad(z * CAMERA_SHAKE_ROTATION_SCALE * 1.35)
+		)
 end
 
 local function applyUnlockedCamera()
@@ -56,11 +110,15 @@ local function applyLockedCamera(targetModel)
 	end
 
 	local targetPoint = targetRoot.Position + Vector3.new(0, 2.5, 0)
-	local flatDirection = targetRoot.Position - playerRoot.Position
+	local flatDirection = Vector3.new(targetRoot.Position.X - playerRoot.Position.X, 0, targetRoot.Position.Z - playerRoot.Position.Z)
 	if flatDirection.Magnitude < 0.01 then
-		flatDirection = playerRoot.CFrame.LookVector
+		flatDirection = Vector3.new(playerRoot.CFrame.LookVector.X, 0, playerRoot.CFrame.LookVector.Z)
 	end
-	flatDirection = Vector3.new(flatDirection.X, 0, flatDirection.Z).Unit
+	if flatDirection.Magnitude < 0.01 then
+		flatDirection = Vector3.zAxis
+	else
+		flatDirection = flatDirection.Unit
+	end
 
 	local right = flatDirection:Cross(Vector3.yAxis)
 	local cameraPosition =
@@ -70,7 +128,9 @@ local function applyLockedCamera(targetModel)
 		+ Vector3.new(0, Constants.CAMERA_LOCKED_HEIGHT, 0)
 
 	humanoid.AutoRotate = false
-	playerRoot.CFrame = CFrame.lookAt(playerRoot.Position, playerRoot.Position + flatDirection)
+	if not isRotationLocked(character) then
+		playerRoot.CFrame = CFrame.lookAt(playerRoot.Position, playerRoot.Position + flatDirection)
+	end
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.FieldOfView = Constants.LOCK_ON_FOV
 	camera.CFrame = CFrame.lookAt(cameraPosition, targetPoint)
@@ -89,6 +149,7 @@ RunService:BindToRenderStep("JudgementDividedCamera", Enum.RenderPriority.Camera
 	local lockOn = _G.JudgementDividedLockOn
 	local targetModel = lockOn and lockOn.GetLockedModel and lockOn.GetLockedModel() or nil
 	if targetModel and applyLockedCamera(targetModel) then
+		applyCameraShake(Workspace.CurrentCamera)
 		return
 	end
 
@@ -97,4 +158,5 @@ RunService:BindToRenderStep("JudgementDividedCamera", Enum.RenderPriority.Camera
 	end
 
 	applyUnlockedCamera()
+	applyCameraShake(Workspace.CurrentCamera)
 end)

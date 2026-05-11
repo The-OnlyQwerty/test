@@ -11,6 +11,19 @@ local function getHumanoid(character)
 	return character and character:FindFirstChildOfClass("Humanoid")
 end
 
+local function getTargetCharacter(target)
+	if typeof(target) ~= "Instance" then
+		return nil
+	end
+	if target:IsA("Player") then
+		return target.Character
+	end
+	if target:IsA("Model") then
+		return target
+	end
+	return nil
+end
+
 local function collectNpcModels()
 	local npcs = {}
 	local folder = workspace:FindFirstChild("CombatNPCs")
@@ -58,7 +71,11 @@ function HitboxService:QueryBox(attacker, cframe, size, debugInfo)
 	local seen = {}
 	local overlap = OverlapParams.new()
 	overlap.FilterType = Enum.RaycastFilterType.Blacklist
-	local filter = {attacker.Character}
+	local attackerCharacter = getTargetCharacter(attacker)
+	local filter = {}
+	if attackerCharacter then
+		table.insert(filter, attackerCharacter)
+	end
 	local effectsFolder = workspace:FindFirstChild("CombatEffects")
 	if effectsFolder then
 		table.insert(filter, effectsFolder)
@@ -68,7 +85,7 @@ function HitboxService:QueryBox(attacker, cframe, size, debugInfo)
 	for _, part in ipairs(workspace:GetPartBoundsInBox(cframe, size, overlap)) do
 		local model = part:FindFirstAncestorOfClass("Model")
 		local humanoid = model and getHumanoid(model)
-		if humanoid and humanoid.Health > 0 and model ~= attacker.Character and not seen[model] then
+		if humanoid and humanoid.Health > 0 and model ~= attackerCharacter and not seen[model] then
 			seen[model] = true
 			table.insert(targets, model)
 		end
@@ -86,6 +103,10 @@ function HitboxService:QueryRadius(attacker, position, radius, debugInfo)
 
 	local targets = {}
 	local seen = {}
+	local attackerCharacter = getTargetCharacter(attacker)
+	if attackerCharacter then
+		seen[attackerCharacter] = true
+	end
 
 	for _, otherPlayer in ipairs(Players:GetPlayers()) do
 		if otherPlayer ~= attacker and otherPlayer.Character then

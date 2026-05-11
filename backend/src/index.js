@@ -27,8 +27,10 @@ app.use(express.json());
 let nextJobId = 1;
 const jobs = [];
 const serverPresence = new Map();
+const recentAiMessageIds = new Set();
 const JOB_RESULT_TIMEOUT_MS = 20000;
 const JOB_RESULT_POLL_MS = 500;
+const AI_MESSAGE_DEDUPE_TTL_MS = 60000;
 const auditChannelId = String(process.env.DISCORD_AUDIT_CHANNEL_ID || "").trim();
 const aiEnabled = /^(1|true|yes|on)$/i.test(String(process.env.JD_AI_ENABLED || ""));
 const aiModel = String(process.env.JD_AI_MODEL || "gpt-5-mini").trim() || "gpt-5-mini";
@@ -301,6 +303,21 @@ function shouldHandleAiMessage(message) {
 	}
 
 	return message.mentions.has(client.user);
+}
+
+function markAiMessageSeen(messageId) {
+	const id = String(messageId || "");
+	if (!id) {
+		return false;
+	}
+	if (recentAiMessageIds.has(id)) {
+		return false;
+	}
+
+	recentAiMessageIds.add(id);
+	const timeout = setTimeout(() => recentAiMessageIds.delete(id), AI_MESSAGE_DEDUPE_TTL_MS);
+	timeout.unref?.();
+	return true;
 }
 
 function stripBotMention(content) {
@@ -967,9 +984,13 @@ client.on("messageCreate", async (message) => {
 		return;
 	}
 
+	if (!markAiMessageSeen(message.id)) {
+		return;
+	}
+
 	const prompt = stripBotMention(message.content || "");
 	if (!prompt && message.attachments.size === 0) {
-		await message.reply("Ping me with a question and I’ll answer.");
+		await message.reply("Ping me with a question and I'll answer.");
 		return;
 	}
 

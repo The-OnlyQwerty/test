@@ -142,6 +142,7 @@ local function getCurrentCharacterTheme()
 					return {
 						ThemeKey = string.format("%s:%s:%s", tostring(kitId), tostring(selectedSkin), tostring(phaseName)),
 						SoundId = characterThemeSoundId,
+						SoundIds = {characterThemeSoundId},
 						SongName = metadata.SongName or tostring(selectedSkin),
 						CreatorName = metadata.CreatorName or "",
 					}
@@ -153,6 +154,7 @@ local function getCurrentCharacterTheme()
 		return {
 			ThemeKey = tostring(selectedSkin or kitId or "CharacterTheme"),
 			SoundId = characterThemeSoundId,
+			SoundIds = {characterThemeSoundId},
 			SongName = metadata.SongName or tostring(kitId or "Character Theme"),
 			CreatorName = metadata.CreatorName or "",
 		}
@@ -171,6 +173,7 @@ local function getCurrentCharacterTheme()
 	return {
 		ThemeKey = kitId,
 		SoundId = soundId,
+		SoundIds = {soundId},
 		SongName = metadata.SongName or tostring(kitId),
 		CreatorName = metadata.CreatorName or "",
 	}
@@ -391,6 +394,9 @@ end
 
 local function applyThemeSound(themeInfo)
 	local soundIds = (themeInfo and themeInfo.SoundIds) or {}
+	if #soundIds == 0 and themeInfo and tonumber(themeInfo.SoundId) and tonumber(themeInfo.SoundId) ~= 0 then
+		soundIds = {tonumber(themeInfo.SoundId)}
+	end
 	local soundId = soundIds[1] or 0
 	local soundIdText = soundId ~= 0 and ("rbxassetid://" .. tostring(soundId)) or ""
 	local isSequence = #soundIds > 1

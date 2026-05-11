@@ -37,6 +37,8 @@ local theme = {
 local isTouchDevice = UserInputService.TouchEnabled
 local DAMAGE_COUNTER_LIFETIME = 1.8
 local COMBAT_CUE_LIFETIME = 0.95
+local COMBAT_CUE_PULSE_LIFETIME = 0.16
+local SCREEN_PULSE_LIFETIME = 0.18
 local viewportConnection
 local naoyaMarkIndicators = {}
 local samuraiBleedIndicators = {}
@@ -75,6 +77,12 @@ local damageCounterState = {
 local combatCueState = {
 	Text = "",
 	Color = theme.text,
+	ExpiresAt = 0,
+	PulseExpiresAt = 0,
+}
+local screenPulseState = {
+	Color = theme.white,
+	Strength = 0,
 	ExpiresAt = 0,
 }
 local updateTouchPanels
@@ -149,6 +157,10 @@ end
 
 local function getLockOn()
 	return _G.JudgementDividedLockOn
+end
+
+local function getCameraEffects()
+	return _G.JudgementDividedCameraEffects
 end
 
 local function buildBeveledBackdrop(parent, padding, color, zIndex)
@@ -228,6 +240,17 @@ local root = create("Frame", {
 	Parent = gui,
 })
 
+local impactFlash = create("Frame", {
+	Name = "ImpactFlash",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = theme.white,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Visible = false,
+	ZIndex = 0,
+	Parent = root,
+})
+
 local damageCounterPanel = create("Frame", {
 	Name = "DamageCounter",
 	AnchorPoint = Vector2.new(0.5, 0),
@@ -296,10 +319,14 @@ create("UICorner", {
 	CornerRadius = UDim.new(0, 12),
 	Parent = combatCuePanel,
 })
-create("UIStroke", {
+local combatCueStroke = create("UIStroke", {
 	Color = Color3.fromRGB(72, 78, 92),
 	Transparency = 0.28,
 	Thickness = 1.1,
+	Parent = combatCuePanel,
+})
+local combatCueScale = create("UIScale", {
+	Scale = 1,
 	Parent = combatCuePanel,
 })
 
@@ -830,7 +857,7 @@ local adminHint = create("TextLabel", {
 	Position = UDim2.new(0, 16, 0, 100),
 	Size = UDim2.new(1, -32, 0, 16),
 	Font = Enum.Font.Gotham,
-	Text = "Enter to run  â¢  Esc to close  â¢  Click a suggestion to fill",
+	Text = "Enter to run | Esc to close | Click a suggestion to fill",
 	TextColor3 = theme.subtle,
 	TextSize = 12,
 	TextXAlignment = Enum.TextXAlignment.Left,
@@ -947,7 +974,7 @@ local function updateAdminSuggestions()
 	end
 
 	adminHint.Text = (#matches > 0)
-		and "Enter to run  â¢  Esc to close  â¢  Click a suggestion to fill"
+		and "Enter to run | Esc to close | Click a suggestion to fill"
 		or "No matching admin commands"
 end
 
@@ -2306,7 +2333,8 @@ local function updateResourceBars()
 
 	title.Text = kit.DisplayName
 	subtitle.Text = isTouchDevice and (getMode() or (kit.Modes and kit.Modes[1]) or "Base") or (kit.Modes and ("Mode: " .. (getMode() or kit.Modes[1])) or "Mode: Base")
-	stats.Text = string.format("ATK %s   DEF %s", tostring(kit.Stats.Attack or 0), tostring(kit.Stats.Defense or 0))
+	local kitStats = kit.Stats or {}
+	stats.Text = string.format("ATK %s   DEF %s", tostring(kitStats.Attack or 0), tostring(kitStats.Defense or 0))
 	local useMagnusStyle = isMagnusKit(kit)
 	local useMagnusBarImage = useMagnusStyle and magnusAssetImages.BlackBar ~= nil and magnusAssetImages.BlackBar ~= ""
 	magnusStatsBackdrop.Visible = useMagnusBarImage
@@ -2332,7 +2360,7 @@ local function updateResourceBars()
 	bars.HP.Fill.Size = UDim2.new(math.clamp(hpCurrent / hpMax, 0, 1), 0, 1, 0)
 	bars.HP.Value.Text = string.format("%d/%d", hpCurrent, hpMax)
 
-	local manaMax = kit.Stats.Mana or 0
+	local manaMax = kitStats.Mana or 0
 	local manaCurrent = character:GetAttribute("Mana") or 0
 	bars.Mana.Label.Text = isTouchDevice and "MP" or "Mana"
 	bars.Mana.Track.Visible = manaMax > 0
@@ -2344,7 +2372,7 @@ local function updateResourceBars()
 		bars.Mana.Value.Text = string.format("%d/%d", manaCurrent, manaMax)
 	end
 
-	local staminaMax = kit.Stats.Stamina or 0
+	local staminaMax = kitStats.Stamina or 0
 	local staminaCurrent = character:GetAttribute("Stamina") or 0
 	bars.Stamina.Label.Text = isTouchDevice and "ST" or "Stamina"
 	bars.Stamina.Track.Visible = staminaMax > 0
@@ -2532,6 +2560,27 @@ local function registerDamage(amount, isKarmic)
 	updateDamageCounterVisuals()
 end
 
+local function triggerCameraImpulse(magnitude)
+	local cameraEffects = getCameraEffects()
+	if not cameraEffects or type(cameraEffects.AddImpulse) ~= "function" then
+		return
+	end
+
+	cameraEffects.AddImpulse({
+		magnitude = magnitude,
+	})
+end
+
+local function triggerScreenPulse(color, strength)
+	if type(strength) ~= "number" or strength <= 0 then
+		return
+	end
+
+	screenPulseState.Color = color or theme.white
+	screenPulseState.Strength = math.max(screenPulseState.Strength or 0, strength)
+	screenPulseState.ExpiresAt = os.clock() + SCREEN_PULSE_LIFETIME
+end
+
 local function showCombatCue(text, color)
 	if type(text) ~= "string" or text == "" then
 		return
@@ -2540,6 +2589,23 @@ local function showCombatCue(text, color)
 	combatCueState.Text = text
 	combatCueState.Color = color or theme.text
 	combatCueState.ExpiresAt = os.clock() + COMBAT_CUE_LIFETIME
+	combatCueState.PulseExpiresAt = os.clock() + COMBAT_CUE_PULSE_LIFETIME
+end
+
+local function updateScreenPulseVisuals()
+	local remaining = screenPulseState.ExpiresAt - os.clock()
+	local active = remaining > 0 and (screenPulseState.Strength or 0) > 0.001
+	impactFlash.Visible = active
+	if not active then
+		impactFlash.BackgroundTransparency = 1
+		screenPulseState.Strength = 0
+		return
+	end
+
+	local fadeAlpha = math.clamp(remaining / SCREEN_PULSE_LIFETIME, 0, 1)
+	local flashAlpha = math.clamp((screenPulseState.Strength or 0) * fadeAlpha, 0, 0.45)
+	impactFlash.BackgroundColor3 = screenPulseState.Color or theme.white
+	impactFlash.BackgroundTransparency = 1 - flashAlpha
 end
 
 local function updateCombatCueVisuals()
@@ -2548,15 +2614,22 @@ local function updateCombatCueVisuals()
 	combatCuePanel.Visible = active
 	if not active then
 		combatCueLabel.Text = ""
+		combatCueScale.Scale = 1
+		combatCueStroke.Thickness = 1.1
+		combatCueStroke.Transparency = 0.28
 		return
 	end
 
 	local fadeAlpha = math.clamp(remaining / COMBAT_CUE_LIFETIME, 0, 1)
+	local pulseAlpha = math.clamp((combatCueState.PulseExpiresAt - os.clock()) / COMBAT_CUE_PULSE_LIFETIME, 0, 1)
 	combatCueLabel.Text = combatCueState.Text
 	combatCueLabel.TextColor3 = combatCueState.Color
 	combatCueLabel.TextTransparency = 1 - fadeAlpha
 	combatCueLabel.TextStrokeTransparency = 0.35 + ((1 - fadeAlpha) * 0.45)
 	combatCuePanel.BackgroundTransparency = 0.34 + ((1 - fadeAlpha) * 0.5)
+	combatCueScale.Scale = 1 + (pulseAlpha * 0.07)
+	combatCueStroke.Thickness = 1.1 + (pulseAlpha * 0.65)
+	combatCueStroke.Transparency = math.clamp(0.28 - (pulseAlpha * 0.18), 0.08, 0.28)
 end
 
 local dodgeDebugNonce = 0
@@ -2602,23 +2675,46 @@ combatState.OnClientEvent:Connect(function(payload)
 		cooldowns[payload.CooldownKey or getCooldownKey(payload.Slot)] = os.clock() + payload.Cooldown
 	elseif payload.Type == "HitConfirm" and payload.Attacker == player.UserId then
 		registerDamage(payload.Damage, payload.IsKarmic == true)
+		triggerScreenPulse(Color3.fromRGB(255, 248, 210), 0.13)
+		triggerCameraImpulse(0.55)
+	elseif payload.Type == "TookDamage" and payload.Target == player.UserId then
+		local pulseColor = payload.Blocked and Color3.fromRGB(150, 188, 255) or Color3.fromRGB(255, 110, 110)
+		local pulseStrength = payload.Blocked and 0.12 or 0.2
+		if payload.BlockBroken then
+			pulseStrength = math.max(pulseStrength, 0.24)
+			pulseColor = Color3.fromRGB(255, 156, 110)
+		end
+		triggerScreenPulse(pulseColor, pulseStrength)
+		triggerCameraImpulse(payload.Blocked and 0.65 or 1.1)
 	elseif payload.Type == "PerfectBlock" then
 		if payload.Player == player.UserId then
 			showCombatCue("PERFECT BLOCK", Color3.fromRGB(170, 215, 255))
+			triggerScreenPulse(Color3.fromRGB(170, 215, 255), 0.2)
+			triggerCameraImpulse(0.9)
 		elseif payload.Target == player.UserId then
 			showCombatCue("PARRIED", Color3.fromRGB(255, 140, 140))
+			triggerScreenPulse(Color3.fromRGB(255, 132, 132), 0.24)
+			triggerCameraImpulse(1.15)
 		end
 	elseif payload.Type == "BlockBreak" then
 		if payload.Attacker == player.UserId then
 			showCombatCue("BLOCK BREAK", theme.gold)
+			triggerScreenPulse(theme.gold, 0.18)
+			triggerCameraImpulse(0.95)
 		elseif payload.Target == player.UserId then
 			showCombatCue("GUARD BROKEN", Color3.fromRGB(255, 132, 132))
+			triggerScreenPulse(Color3.fromRGB(255, 156, 110), 0.28)
+			triggerCameraImpulse(1.2)
 		end
 	elseif payload.Type == "CounterTriggered" then
 		if payload.Player == player.UserId then
 			showCombatCue("COUNTER!", Color3.fromRGB(255, 230, 150))
+			triggerScreenPulse(Color3.fromRGB(255, 230, 150), 0.2)
+			triggerCameraImpulse(1)
 		elseif payload.Target == player.UserId then
 			showCombatCue("COUNTERED", Color3.fromRGB(255, 132, 132))
+			triggerScreenPulse(Color3.fromRGB(255, 132, 132), 0.26)
+			triggerCameraImpulse(1.15)
 		end
 	elseif payload.Type == "DodgeDebug" then
 		showDodgeDebug(payload.Text)
@@ -2646,6 +2742,9 @@ end)
 local function hookCharacter(character)
 	resetDamageCounter()
 	updateDamageCounterVisuals()
+	screenPulseState.ExpiresAt = 0
+	screenPulseState.Strength = 0
+	updateScreenPulseVisuals()
 	for _, attributeName in ipairs({"KitId", "Mode", "Mana", "Stamina", "Blocking", "ActiveBlasters", "Dodge", "MaxDodge"}) do
 		character:GetAttributeChangedSignal(attributeName):Connect(refreshAll)
 	end
@@ -2684,6 +2783,7 @@ RunService.RenderStepped:Connect(function()
 	updateSamuraiBleedIndicators()
 	updateNaoyaFrozenVisuals()
 	updateCooldownVisuals()
+	updateScreenPulseVisuals()
 	updateCombatCueVisuals()
 	updateDamageCounterVisuals()
 end)

@@ -2290,14 +2290,15 @@ function CombatService:OnCharacterAdded(player, character)
 	end
 	state.Mode = kit.Modes and kit.Modes[1] or "Base"
 	local buffs = state.Buffs or {}
+	local kitStats = kit.Stats or {}
 
-	local maxHealth = buffs.Health or kit.Stats.Health
+	local maxHealth = buffs.Health or kitStats.Health or Constants.DEFAULT_HEALTH or 100
 	if kit.DisplayName == "Sans" then
 		maxHealth = self:GetSansDodgeCapacity(player, kit)
 	end
 	humanoid.MaxHealth = maxHealth
 	humanoid.Health = maxHealth
-	humanoid.WalkSpeed = tonumber(kit.Stats and kit.Stats.WalkSpeed) or Constants.DEFAULT_WALKSPEED
+	humanoid.WalkSpeed = tonumber(kitStats.WalkSpeed) or Constants.DEFAULT_WALKSPEED
 	humanoid.Jump = true
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	humanoid.NameDisplayDistance = 0
@@ -2309,10 +2310,10 @@ function CombatService:OnCharacterAdded(player, character)
 	character:SetAttribute("Blocking", false)
 	character:SetAttribute("Stunned", false)
 	character:SetAttribute("InCombat", false)
-	character:SetAttribute("Mana", buffs.Mana or kit.Stats.Mana or 0)
-	character:SetAttribute("Stamina", buffs.Stamina or kit.Stats.Stamina or 0)
-	character:SetAttribute("Attack", buffs.Attack or kit.Stats.Attack or 0)
-	character:SetAttribute("Defense", buffs.Defense or kit.Stats.Defense or 0)
+	character:SetAttribute("Mana", buffs.Mana or kitStats.Mana or 0)
+	character:SetAttribute("Stamina", buffs.Stamina or kitStats.Stamina or 0)
+	character:SetAttribute("Attack", buffs.Attack or kitStats.Attack or 0)
+	character:SetAttribute("Defense", buffs.Defense or kitStats.Defense or 0)
 	character:SetAttribute("MaxDodge", kit.DisplayName == "Sans" and maxHealth or 0)
 	character:SetAttribute("Dodge", kit.DisplayName == "Sans" and maxHealth or 0)
 	character:SetAttribute("Dodging", false)
@@ -2566,12 +2567,17 @@ end
 
 function CombatService:IsActionLocked(player)
 	local state = self:GetState(player)
-	return not state or state.IsStunnedUntil > now()
+	return not state or state.IsStunnedUntil > now() or self:IsKnockbackLocked(player)
+end
+
+function CombatService:IsKnockbackLocked(player)
+	local character = getTargetCharacter(player)
+	return character and character:GetAttribute("KnockbackLocked") == true
 end
 
 function CombatService:IsMovementLocked(player)
 	local state = self:GetState(player)
-	return not state or state.IsBlocking or state.IsStunnedUntil > now() or (state.CastLockUntil or 0) > now()
+	return not state or state.IsBlocking or state.IsStunnedUntil > now() or (state.CastLockUntil or 0) > now() or self:IsKnockbackLocked(player)
 end
 
 function CombatService:RefreshMovementState(player, options)
@@ -2589,9 +2595,10 @@ function CombatService:RefreshMovementState(player, options)
 	end
 
 	local kit = self:GetKit(targetPlayer)
+	local kitStats = kit and kit.Stats or {}
 	local movementLocked = state.IsBlocking or state.IsStunnedUntil > now() or (state.CastLockUntil or 0) > now()
-	local baseWalkSpeed = tonumber(kit.Stats and kit.Stats.WalkSpeed) or Constants.DEFAULT_WALKSPEED
-	local runWalkSpeed = tonumber(kit.Stats and kit.Stats.RunWalkSpeed) or Constants.RUN_WALKSPEED or baseWalkSpeed
+	local baseWalkSpeed = tonumber(kitStats.WalkSpeed) or Constants.DEFAULT_WALKSPEED
+	local runWalkSpeed = tonumber(kitStats.RunWalkSpeed) or Constants.RUN_WALKSPEED or baseWalkSpeed
 	local walkSpeed = baseWalkSpeed
 	if state.IsRunning and not movementLocked then
 		walkSpeed = runWalkSpeed
@@ -2895,16 +2902,17 @@ function CombatService:RunResourceRegen()
 		for _, player in ipairs(Players:GetPlayers()) do
 			local state = self:GetState(player)
 			local kit = self:GetKit(player)
+			local kitStats = kit and kit.Stats
 			local character = player.Character
 			local humanoid = getHumanoid(character)
-			if state and kit and character and humanoid then
-				local manaMax = kit.Stats.Mana or 0
+			if state and kitStats and character and humanoid then
+				local manaMax = kitStats.Mana or 0
 				if manaMax > 0 then
 					local manaGain = Constants.MANA_REGEN_PER_SECOND * 0.25
 					self:SetResource(player, "Mana", math.min(manaMax, self:GetResource(player, "Mana") + manaGain))
 				end
 
-				local staminaMax = kit.Stats.Stamina or 0
+				local staminaMax = kitStats.Stamina or 0
 				if staminaMax > 0 then
 					local isMovementLocked = state.IsBlocking or state.IsStunnedUntil > now() or (state.CastLockUntil or 0) > now()
 					local isActuallyRunning = state.IsRunning and not isMovementLocked and humanoid.MoveDirection.Magnitude > 0.05 and humanoid.Health > 0
@@ -3284,13 +3292,14 @@ function CombatService:ResetCombatState(player)
 		state.BlockAura = nil
 	end
 
-	local maxHealth = buffs.Health or kit.Stats.Health
+	local kitStats = kit.Stats or {}
+	local maxHealth = buffs.Health or kitStats.Health or Constants.DEFAULT_HEALTH or 100
 	if kit.DisplayName == "Sans" then
 		maxHealth = self:GetSansDodgeCapacity(player, kit)
 	end
 	humanoid.MaxHealth = maxHealth
 	humanoid.Health = maxHealth
-	humanoid.WalkSpeed = tonumber(kit.Stats and kit.Stats.WalkSpeed) or Constants.DEFAULT_WALKSPEED
+	humanoid.WalkSpeed = tonumber(kitStats.WalkSpeed) or Constants.DEFAULT_WALKSPEED
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
 
@@ -3298,10 +3307,10 @@ function CombatService:ResetCombatState(player)
 	character:SetAttribute("BlockName", "")
 	character:SetAttribute("Stunned", false)
 	character:SetAttribute("InCombat", false)
-	character:SetAttribute("Mana", buffs.Mana or kit.Stats.Mana or 0)
-	character:SetAttribute("Stamina", buffs.Stamina or kit.Stats.Stamina or 0)
-	character:SetAttribute("Attack", buffs.Attack or kit.Stats.Attack or 0)
-	character:SetAttribute("Defense", buffs.Defense or kit.Stats.Defense or 0)
+	character:SetAttribute("Mana", buffs.Mana or kitStats.Mana or 0)
+	character:SetAttribute("Stamina", buffs.Stamina or kitStats.Stamina or 0)
+	character:SetAttribute("Attack", buffs.Attack or kitStats.Attack or 0)
+	character:SetAttribute("Defense", buffs.Defense or kitStats.Defense or 0)
 	character:SetAttribute("MaxDodge", kit.DisplayName == "Sans" and maxHealth or 0)
 	character:SetAttribute("Dodge", kit.DisplayName == "Sans" and maxHealth or 0)
 	character:SetAttribute("Dodging", false)
@@ -3549,7 +3558,7 @@ function CombatService:HandleAdminCommand(player, command, args)
 		local character = target.Character
 		local humanoid = getHumanoid(character)
 		local targetState = self:GetState(target)
-		if not kit or not character then
+		if not kit or not character or not targetState then
 			self:SendMessage(player, "Target is not ready.")
 			return true
 		end
@@ -3715,7 +3724,12 @@ function CombatService:SetBlocking(player, isBlocking)
 	local state = self:GetState(player)
 	local character = player.Character
 	local humanoid = getHumanoid(character)
+	local kit = self:GetKit(player)
 	if not state or not character or not humanoid then
+		return
+	end
+
+	if isBlocking and not kit then
 		return
 	end
 
@@ -3738,7 +3752,8 @@ function CombatService:SetBlocking(player, isBlocking)
 	state.IsBlocking = isBlocking
 	state.PerfectBlockUntil = isBlocking and (now() + (Constants.PERFECT_BLOCK_WINDOW or 0)) or 0
 	character:SetAttribute("Blocking", isBlocking)
-	character:SetAttribute("BlockName", isBlocking and (self:GetKit(player).Block.Name or "Block") or "")
+	local blockInfo = kit and kit.Block or {}
+	character:SetAttribute("BlockName", isBlocking and (blockInfo.Name or "Block") or "")
 
 	if isBlocking then
 		local root = getCharacterRoot(character)
@@ -3751,7 +3766,7 @@ function CombatService:SetBlocking(player, isBlocking)
 			if state.BlockAura then
 				self.Effects:DestroyBlockAura(state.BlockAura)
 			end
-			local blockColor = self:GetKit(player).DisplayName == "Sans" and self:GetSansEffectPalette(player).Block or Color3.fromRGB(245, 245, 255)
+			local blockColor = kit and kit.DisplayName == "Sans" and self:GetSansEffectPalette(player).Block or Color3.fromRGB(245, 245, 255)
 			state.BlockAura = self.Effects:CreateBlockAura(root, blockColor)
 		end
 	else
@@ -3762,7 +3777,7 @@ function CombatService:SetBlocking(player, isBlocking)
 		end
 	end
 
-	if isBlocking and self:GetKit(player).DisplayName == "Sans" then
+	if isBlocking and kit and kit.DisplayName == "Sans" then
 		local root = getCharacterRoot(character)
 		if root then
 			local palette = self:GetSansEffectPalette(player)
@@ -3923,11 +3938,22 @@ function CombatService:PlayKnockbackAnimations(target, horizontalVelocity)
 	end
 
 	self:ClearKnockbackAnimationState(targetCharacter)
+	local targetPlayer = getTargetPlayer(targetCharacter)
+	if targetPlayer then
+		self:SetBlocking(targetPlayer, false)
+		local targetState = self:GetState(targetPlayer)
+		if targetState then
+			targetState.IsRunning = false
+		end
+	end
 
 	local state = {}
 	self.ActiveKnockbackAnimations[targetCharacter] = state
 	targetCharacter:SetAttribute("KnockbackLocked", true)
 	humanoid.AutoRotate = false
+	if targetPlayer then
+		humanoid.WalkSpeed = 0
+	end
 	humanoid.Jump = false
 	humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
 	pcall(function()
@@ -3969,7 +3995,11 @@ function CombatService:PlayKnockbackAnimations(target, horizontalVelocity)
 			local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
 			if now() >= minLandingAt and state.HasBeenAirborne and grounded then
 				local slideDuration = self:GetKnockbackSlideDuration(target)
-				local slideDirection = state.HorizontalVelocity.Magnitude > 0.001 and state.HorizontalVelocity.Unit or Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+				local slideDirection = state.HorizontalVelocity
+				if slideDirection.Magnitude <= 0.001 then
+					slideDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+				end
+				slideDirection = slideDirection.Magnitude > 0.001 and slideDirection.Unit or Vector3.zAxis
 				local slideSpeed = math.clamp(
 					state.HorizontalVelocity.Magnitude * (Constants.KNOCKBACK_SLIDE_SPEED_SCALE or 0.35),
 					Constants.KNOCKBACK_SLIDE_SPEED_MIN or 8,
@@ -4054,9 +4084,13 @@ function CombatService:ApplyKnockback(attacker, target, knockback, launch)
 		return
 	end
 
-	local direction = targetRoot.Position - attackerRoot.Position
+	local offset = targetRoot.Position - attackerRoot.Position
+	local direction = Vector3.new(offset.X, 0, offset.Z)
 	if direction.Magnitude < 0.001 then
-		direction = attackerRoot.CFrame.LookVector
+		direction = Vector3.new(attackerRoot.CFrame.LookVector.X, 0, attackerRoot.CFrame.LookVector.Z)
+	end
+	if direction.Magnitude < 0.001 then
+		direction = Vector3.zAxis
 	end
 
 	local horizontalVelocity = direction.Unit * knockback
@@ -4399,7 +4433,8 @@ function CombatService:ResolveSansCounter(defender, attacker)
 	local attackerCharacter = getTargetCharacter(attacker)
 	local attackerPlayer = getTargetPlayer(attacker)
 	local attackerRoot = getCharacterRoot(attackerCharacter)
-	local counterPalette = self:GetKit(defender) and self:GetKit(defender).DisplayName == "Sans" and self:GetSansEffectPalette(defender) or DEFAULT_SANS_PALETTE
+	local defenderKit = self:GetKit(defenderPlayer)
+	local counterPalette = defenderKit and defenderKit.DisplayName == "Sans" and self:GetSansEffectPalette(defenderPlayer) or DEFAULT_SANS_PALETTE
 	if defenderRoot then
 		self.Effects:SpawnCounterFlash(defenderRoot.Position, counterPalette.Counter)
 		defenderRoot.CFrame = defenderRoot.CFrame + defenderRoot.CFrame.LookVector * -8
@@ -4413,7 +4448,8 @@ function CombatService:ResolveSansCounter(defender, attacker)
 	local attackerHumanoid = getHumanoid(attackerCharacter)
 	if attackerHumanoid and attackerHumanoid.Health > 0 then
 		local appliedDamage = self:ScaleDamage(defenderPlayer, attackerCharacter, counterAbility.Damage)
-		if attackerPlayer and self:GetKit(attackerPlayer) and self:GetKit(attackerPlayer).DisplayName == "Sans" then
+		local attackerKit = attackerPlayer and self:GetKit(attackerPlayer)
+		if attackerPlayer and attackerKit and attackerKit.DisplayName == "Sans" then
 			self:SetSansDodgePoints(attackerPlayer, (attackerCharacter:GetAttribute("Dodge") or attackerHumanoid.Health) - appliedDamage)
 			attackerCharacter:SetAttribute("LastDamagedByUserId", defenderPlayer and defenderPlayer.UserId or nil)
 		else
@@ -4684,6 +4720,16 @@ function CombatService:DamageTarget(attacker, target, damage, knockback, stun, o
 			targetCharacter:SetAttribute("LastDamagedByUserId", attackerUserId)
 		end
 	end
+	if appliedDamage > 0 and targetPlayer then
+		self.Remotes.CombatState:FireAllClients({
+			Type = "TookDamage",
+			Attacker = attackerUserId,
+			Target = targetPlayer.UserId,
+			Damage = appliedDamage,
+			Blocked = isBlocking == true,
+			BlockBroken = brokeBlock == true,
+		})
+	end
 	if brokeBlock then
 		self.Remotes.CombatState:FireAllClients({
 			Type = "BlockBreak",
@@ -4710,10 +4756,12 @@ function CombatService:DamageTarget(attacker, target, damage, knockback, stun, o
 	end
 
 	if targetPlayer and targetKit and targetKit.DisplayName == "Sans" and targetKit.Passive then
-		self:SetResource(targetPlayer, "Mana", self:GetResource(targetPlayer, "Mana") - targetKit.Passive.OnHitManaLoss - appliedDamage)
+		local onHitManaLoss = tonumber(targetKit.Passive.OnHitManaLoss) or 0
+		self:SetResource(targetPlayer, "Mana", self:GetResource(targetPlayer, "Mana") - onHitManaLoss - appliedDamage)
 	end
 
-	if not options.NoKR and self:GetKit(attacker) and self:GetKit(attacker).Passive then
+	local attackerKitForPassive = self:GetKit(attacker)
+	if not options.NoKR and attackerKitForPassive and attackerKitForPassive.Passive then
 		self:ApplyKarmicRetribution(attacker, target)
 	end
 
@@ -4926,7 +4974,8 @@ function CombatService:TryDash(player, payload)
 	end
 
 	if not dashDirection then
-		dashDirection = root.CFrame.LookVector
+		local fallbackDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+		dashDirection = fallbackDirection.Magnitude > 0.01 and fallbackDirection.Unit or Vector3.zAxis
 	end
 
 	local velocity = Instance.new("BodyVelocity")
@@ -4956,11 +5005,12 @@ function CombatService:SetRunning(player, enabled)
 		return
 	end
 
+	local kitStats = kit.Stats or {}
 	local wantsRunning = enabled == true
 	if wantsRunning then
 		if self:IsMovementLocked(player) or humanoid.Health <= 0 then
 			wantsRunning = false
-		elseif (kit.Stats.Stamina or 0) > 0 and self:GetResource(player, "Stamina") <= 0 then
+		elseif (kitStats.Stamina or 0) > 0 and self:GetResource(player, "Stamina") <= 0 then
 			wantsRunning = false
 		end
 	end
@@ -5701,9 +5751,13 @@ function CombatService:PerformNaoyaAbility(player, slot, ability, payload)
 		local ringDuration = tonumber(ability.RingDuration) or tonumber(ability.ActiveDuration) or 5
 		local ringCloneCount = tonumber(ability.RingCloneCount) or 6
 		local initialDelta = Vector3.new(targetRoot.Position.X - startPosition.X, 0, targetRoot.Position.Z - startPosition.Z)
-		local dashDirection = initialDelta.Magnitude > 0.01 and initialDelta.Unit or Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
-		local flatLookTarget = Vector3.new(targetRoot.Position.X, root.Position.Y, targetRoot.Position.Z)
-		root.CFrame = CFrame.lookAt(root.Position, flatLookTarget)
+		local fallbackDashDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+		local dashDirection = initialDelta.Magnitude > 0.01
+			and initialDelta.Unit
+			or (fallbackDashDirection.Magnitude > 0.01 and fallbackDashDirection.Unit or Vector3.zAxis)
+		if initialDelta.Magnitude > 0.01 then
+			root.CFrame = CFrame.lookAt(root.Position, root.Position + initialDelta.Unit)
+		end
 		self.Effects:CreateAfterimageRing(character, targetRoot, {
 			Count = ringCloneCount,
 			Radius = sequenceRadius,

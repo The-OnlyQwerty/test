@@ -448,7 +448,7 @@ end
 local function createDummy(folder, config)
 	local existing = folder:FindFirstChild(config.Name)
 	if existing then
-		if existing:GetAttribute("DummyRigVersion") == 2 then
+		if existing:GetAttribute("DummyRigVersion") == 3 then
 			return existing
 		end
 		existing:Destroy()

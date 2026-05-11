@@ -74,9 +74,17 @@ local function isBlockingLocally()
 	return blocking or (character and character:GetAttribute("Blocking") == true)
 end
 
-local function isJumpSuppressedLocally()
+local function isKnockbackLockedLocally()
 	local character = getCharacter()
-	return isBlockingLocally() or (character and character:GetAttribute("KnockbackLocked") == true)
+	return character and character:GetAttribute("KnockbackLocked") == true
+end
+
+local function isCombatInputLockedLocally()
+	return isKnockbackLockedLocally()
+end
+
+local function isJumpSuppressedLocally()
+	return isBlockingLocally() or isKnockbackLockedLocally()
 end
 
 local function hasPendingBlasterShots()
@@ -318,6 +326,10 @@ local function getDashMoveDirection()
 end
 
 local function requestDash()
+	if isCombatInputLockedLocally() then
+		return
+	end
+
 	combatRequest:FireServer({
 		Action = "Dash",
 		MoveDirection = getDashMoveDirection(),
@@ -325,6 +337,10 @@ local function requestDash()
 end
 
 local function requestDirectedDash(moveDirection)
+	if isCombatInputLockedLocally() then
+		return
+	end
+
 	combatRequest:FireServer({
 		Action = "Dash",
 		MoveDirection = moveDirection or getDashMoveDirection(),
@@ -339,7 +355,7 @@ local function requestRunState(enabled)
 end
 
 local function isDirectionalDashRunBlocked()
-	return getKitId() == "Sans" and getMode() == "Telekinesis"
+	return isCombatInputLockedLocally() or (getKitId() == "Sans" and getMode() == "Telekinesis")
 end
 
 local function getDirectionalDashVector(keyCode)
@@ -350,13 +366,13 @@ local function getDirectionalDashVector(keyCode)
 	if not forward or forward.Magnitude <= 0.01 then
 		forward = root and Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z) or Vector3.zAxis
 	end
-	forward = forward.Unit
+	forward = forward.Magnitude > 0.01 and forward.Unit or Vector3.zAxis
 
 	local right = camera and Vector3.new(camera.CFrame.RightVector.X, 0, camera.CFrame.RightVector.Z)
 	if not right or right.Magnitude <= 0.01 then
 		right = root and Vector3.new(root.CFrame.RightVector.X, 0, root.CFrame.RightVector.Z) or Vector3.xAxis
 	end
-	right = right.Unit
+	right = right.Magnitude > 0.01 and right.Unit or Vector3.xAxis
 
 	if keyCode == Enum.KeyCode.W then
 		return forward
@@ -434,6 +450,10 @@ local function requestSwitchMode(direction)
 end
 
 local function requestBlockStart()
+	if isCombatInputLockedLocally() then
+		return
+	end
+
 	if not blocking then
 		blocking = true
 		combatRequest:FireServer({Action = "BlockStart"})
@@ -448,6 +468,10 @@ local function requestBlockEnd()
 end
 
 local function requestAbility(slot)
+	if isCombatInputLockedLocally() then
+		return
+	end
+
 	local bypassCooldown = slot == "X" and getKitId() == "Sans" and getMode() == "Blasters" and hasPendingBlasterShots()
 	if not slot or (not canUse(slot) and not bypassCooldown) then
 		return

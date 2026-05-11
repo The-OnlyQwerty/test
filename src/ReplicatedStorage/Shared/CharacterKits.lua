@@ -9,9 +9,9 @@ local CharacterKits = {
 			Defense = 1,
 		},
 		AnimationIds = {
-			Idle = 99388335432777,
+			Idle = 75493811600183,
 			CombatIdle = 78917293931057,
-			Walk = 79978101621504,
+			Walk = 137021170208612,
 			DodgeLeft = 96937566028662,
 			DodgeRight = 96109323402188,
 			BlasterSummon = 105721306012475,
