@@ -29,6 +29,7 @@ Supported job types:
    - `DISCORD_AUDIT_CHANNEL_ID` (optional)
    - `OPENAI_API_KEY` (optional, for JD AI mention replies)
    - `JD_AI_ENABLED`
+   - `JD_AI_CHAT_REPLIES_ENABLED`
    - `JD_AI_MODEL`
    - `JD_AI_CHANNEL_IDS` (optional)
    - `BRIDGE_SHARED_SECRET`
@@ -81,6 +82,7 @@ Set these in `.env`:
 ```env
 OPENAI_API_KEY=your_openai_key
 JD_AI_ENABLED=true
+JD_AI_CHAT_REPLIES_ENABLED=false
 JD_AI_MODEL=gpt-5-mini
 JD_AI_CHANNEL_IDS=123456789012345678,987654321098765432
 JD_AI_ALLOWED_ROLE_IDS=1482836698378535137
@@ -89,6 +91,7 @@ JD_AI_ALLOWED_ROLE_IDS=1482836698378535137
 Notes:
 
 - JD AI replies are mention-based, not slash-command based
+- `JD_AI_CHAT_REPLIES_ENABLED` must be `true` before JD will reply to pings
 - if `JD_AI_CHANNEL_IDS` is blank, JD can reply in any server channel where it is pinged
 - if `JD_AI_CHANNEL_IDS` is set, JD only replies in those channels
 - if `JD_AI_ALLOWED_ROLE_IDS` is set, JD only replies to members with one of those roles

@@ -32,7 +32,9 @@ const JOB_RESULT_TIMEOUT_MS = 20000;
 const JOB_RESULT_POLL_MS = 500;
 const AI_MESSAGE_DEDUPE_TTL_MS = 60000;
 const auditChannelId = String(process.env.DISCORD_AUDIT_CHANNEL_ID || "").trim();
-const aiEnabled = /^(1|true|yes|on)$/i.test(String(process.env.JD_AI_ENABLED || ""));
+const aiFeatureEnabled = /^(1|true|yes|on)$/i.test(String(process.env.JD_AI_ENABLED || ""));
+const aiChatRepliesEnabled = /^(1|true|yes|on)$/i.test(String(process.env.JD_AI_CHAT_REPLIES_ENABLED || ""));
+const aiEnabled = aiFeatureEnabled && aiChatRepliesEnabled;
 const aiModel = String(process.env.JD_AI_MODEL || "gpt-5-mini").trim() || "gpt-5-mini";
 const aiChannelIds = new Set(
 	(process.env.JD_AI_CHANNEL_IDS || "")
@@ -282,12 +284,26 @@ function getMemberRoleIds(member) {
 				: [];
 }
 
+function hasDirectBotMention(message) {
+	const botId = client.user?.id;
+	if (!botId) {
+		return false;
+	}
+
+	const directMentionPattern = new RegExp(`<@!?${botId}>`);
+	return directMentionPattern.test(message.content || "");
+}
+
 function shouldHandleAiMessage(message) {
 	if (!aiEnabled || !openai) {
 		return false;
 	}
 
 	if (!message.guild || message.author.bot) {
+		return false;
+	}
+
+	if (!hasDirectBotMention(message)) {
 		return false;
 	}
 
@@ -302,7 +318,7 @@ function shouldHandleAiMessage(message) {
 		}
 	}
 
-	return message.mentions.has(client.user);
+	return true;
 }
 
 function markAiMessageSeen(messageId) {
@@ -963,7 +979,7 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 client.on("messageCreate", async (message) => {
-	const wasMentioned = !!client.user && message.mentions.has(client.user);
+	const wasMentioned = hasDirectBotMention(message);
 	if (!shouldHandleAiMessage(message)) {
 		if (wasMentioned) {
 			const reason = !aiEnabled
